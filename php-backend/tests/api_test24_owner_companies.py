@@ -1,0 +1,91 @@
+"""Only the owner creates companies and chooses which HR managers run each one.
+Run:  python api_test24_owner_companies.py http://127.0.0.1:8098
+"""
+from feat_common import *
+
+print("== setup: holding company (owner), a Super Admin (HR manager) and a second HR manager")
+owner, owner_uid, HQ = company("own")
+sql(f"INSERT INTO platform_owners (user_id) VALUES ({owner_uid})")
+sql(f"INSERT INTO company_groups (name, slug) VALUES ('Grp {RUN}', 'grp-{RUN}')")
+sql(f"UPDATE companies SET group_id = (SELECT id FROM company_groups WHERE slug = 'grp-{RUN}') WHERE id = {HQ}")
+
+
+def staff(email, name):
+    s, r = call("POST", "/hr-staff", {"name": name, "email": email, "password": PW, "role": "hr_manager"}, owner)
+    assert s in (200, 201), (s, r)
+    s, r = call("POST", "/auth/login", {"email": email, "password": PW})
+    assert r.get("token"), (s, r)
+    return r["token"], (r.get("user") or {}).get("id") or r["user"]["id"]
+
+
+sup_tok, SUP = staff(f"super{RUN}@own.test", "Super Admin")
+sql(f"INSERT INTO group_admins (group_id, user_id) SELECT group_id, {SUP} FROM companies WHERE id = {HQ}")
+hr2_tok, HR2 = staff(f"hrtwo{RUN}@own.test", "Second HR")
+hr3_tok, HR3 = staff(f"hrthree{RUN}@own.test", "Third HR")
+s, r = call("POST", "/auth/login", {"email": f"super{RUN}@own.test", "password": PW})
+check("super admin signs in and is not the owner", s == 200 and r["group"]["isSuperAdmin"] is True and r["group"].get("isOwner") is False, r.get("group"))
+s, r = call("POST", "/auth/login", {"email": f"admin{'own'}{RUN}@feat.test", "password": PW})
+check("owner signs in and is flagged as owner", s == 200 and r["group"].get("isOwner") is True, r.get("group"))
+
+print("== only the owner creates companies")
+s, r = call("POST", "/group/companies", {"name": f"By super {RUN}"}, sup_tok)
+check("Super Admin cannot create a company (403)", s == 403, f"{s} {r}")
+s, r = call("POST", "/group/companies", {"name": f"By hr {RUN}"}, hr2_tok)
+check("an HR manager cannot create a company", s in (403, 404), f"{s} {r}")
+s, r = call("POST", "/group/companies", {"name": f"A {RUN}", "ceoName": "Half", "ceoEmail": f"half{RUN}@own.test"}, owner)
+check("a half-filled new HR account is refused", s == 422, f"{s} {r}")
+s, r = call("POST", "/group/companies", {"name": f"A {RUN}", "hrUserIds": [999999]}, owner)
+check("an unknown HR manager is refused", s == 404, f"{s} {r}")
+
+print("== owner creates company A for HR2 only (no new account)")
+s, r = call("POST", "/group/companies", {"name": f"Company A {RUN}", "hrUserIds": [HR2]}, owner)
+A = r.get("id")
+check("company A created, owner-managed, HR2 granted, no CEO", s == 201 and A and r.get("ownerManaged") is True and r.get("granted") == [HR2] and r.get("ceo") is None, f"{s} {r}")
+s, r = call("GET", "/group/companies", None, owner)
+rowA = next((c for c in r.get("companies", []) if c["id"] == A), None)
+check("owner sees it with who manages it", s == 200 and rowA and [m["id"] for m in rowA["managers"]] == [HR2], f"{s} {rowA}")
+s, r = call("GET", "/group/companies", None, sup_tok)
+check("Super Admin does NOT see company A (the owner kept it)", s == 200 and not any(c["id"] == A for c in r.get("companies", [])), r)
+s, r = call("POST", "/group/switch", {"companyId": A}, sup_tok)
+check("Super Admin cannot enter company A", s == 403, f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": A}, hr2_tok)
+check("HR2 enters company A", s == 200, f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": A}, hr3_tok)
+check("HR3 (not chosen) cannot enter company A", s == 403, f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": A}, owner)
+check("the owner enters every company", s == 200, f"{s} {r}")
+
+print("== a different HR manager for each company, plus a brand-new HR account")
+s, r = call("POST", "/group/companies", {"name": f"Company B {RUN}", "hrUserIds": [HR3], "ceoName": "Fresh HR", "ceoEmail": f"fresh{RUN}@own.test", "ceoPassword": PW}, owner)
+B = r.get("id")
+check("company B created with HR3 + a new HR account", s == 201 and B and r["ceo"]["email"] == f"fresh{RUN}@own.test" and r["granted"] == [HR3], f"{s} {r}")
+s, r = call("POST", "/auth/login", {"email": f"fresh{RUN}@own.test", "password": PW})
+check("the new HR account of B signs in", s == 200 and r.get("token"), f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": B}, hr3_tok)
+check("HR3 enters B", s == 200, f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": B}, hr2_tok)
+check("HR2 cannot enter B (different HR manager per company)", s == 403, f"{s} {r}")
+s, r = call("POST", "/group/switch", {"companyId": A}, hr3_tok)
+check("HR3 cannot enter A", s == 403, f"{s} {r}")
+
+print("== the owner decides later: give the Super Admin access to A")
+s, r = call("POST", "/group/access", {"userId": SUP, "companyId": A, "level": "full"}, owner)
+check("owner grants the Super Admin access to the owner-managed company", s == 201, f"{s} {r}")
+s, r = call("GET", "/group/companies", None, sup_tok)
+check("Super Admin now sees A (and still not B)", s == 200 and any(c["id"] == A for c in r["companies"]) and not any(c["id"] == B for c in r["companies"]), r)
+s, r = call("POST", "/group/switch", {"companyId": A}, sup_tok)
+check("Super Admin enters A through the grant", s == 200, f"{s} {r}")
+s, r = call("POST", "/group/access", {"userId": SUP, "companyId": B, "level": "full"}, sup_tok)
+check("Super Admin cannot grant on a company he cannot see", s == 404, f"{s} {r}")
+s, r = call("PUT", f"/group/companies/{B}", {"ownerManaged": False}, sup_tok)
+check("Super Admin cannot change who sees a company", s == 404, f"{s} {r}")
+s, r = call("PUT", f"/group/companies/{B}", {"ownerManaged": False}, owner)
+check("owner can open B to the Super Admin for everyone in the group", s == 200, f"{s} {r}")
+s, r = call("GET", "/group/companies", None, sup_tok)
+check("Super Admin sees B once it is not owner-managed", s == 200 and any(c["id"] == B for c in r["companies"]), r)
+
+print("== feature switches follow the same rule")
+s, r = call("GET", "/owner/features", None, sup_tok)
+ids = [c["id"] for c in r.get("companies", [])] if s == 200 else []
+check("Super Admin's switch list has no company the owner kept", s == 200 and A in ids and B in ids and HQ in ids, f"{s} {ids}")
+finish()

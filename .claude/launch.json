@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api-server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@workspace/api-server", "run", "dev"],
+      "port": 3001
+    },
+    {
+      "name": "hr-portal",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@workspace/hr-portal", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

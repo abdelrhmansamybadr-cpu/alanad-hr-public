@@ -1,0 +1,127 @@
+"""Feature career_path: ladder, skills, readiness from tenure + points + skills, promotion through the normal flow.
+Run:  python api_test20_career.py http://127.0.0.1:8098
+"""
+import datetime
+from feat_common import *
+
+today = datetime.date.today()
+iso = lambda back: (today - datetime.timedelta(days=back)).isoformat()
+
+print("== setup")
+hr, hr_uid, C = company("career")
+boss_tok, BOSS, _ = employee(hr, "boss", salary=15000, start_date=iso(2000))
+a_tok, A, _ = employee(hr, "alia", salary=7000, manager_id=BOSS, start_date=iso(600))      # ~20 months
+b_tok, B, _ = employee(hr, "bahaa", salary=6000, manager_id=BOSS, start_date=iso(60))
+out_tok, OUT, _ = employee(hr, "outsider", salary=6000, start_date=iso(60))
+
+print("== closed until switched on")
+s, r = call("GET", "/career/levels", None, hr)
+check("closed while off", s == 403 and r.get("code") == "feature_disabled", f"{s} {r}")
+switch(C, career_path=True)
+s, r = call("PUT", "/points/config", {"enabled": True}, hr)
+
+print("== HR builds the ladder")
+s, r = call("POST", "/career/skills", {"name_en": "Selling", "name_ar": "البيع"}, hr)
+check("skill added", s == 201 and any(x["nameEn"] == "Selling" for x in r), f"{s} {r}")
+S1 = [x for x in r if x["nameEn"] == "Selling"][0]["id"]
+s, r = call("POST", "/career/skills", {"name_en": "Negotiation"}, hr)
+S2 = [x for x in r if x["nameEn"] == "Negotiation"][0]["id"]
+s, r = call("POST", "/career/skills", {"name_en": "Selling"}, hr)
+check("duplicate skill refused", s == 409, f"{s}")
+s, r = call("POST", "/career/skills", {"name_en": "Hacking"}, a_tok)
+check("an employee cannot add skills to the catalogue", s == 403, f"{s}")
+s, r = call("POST", "/career/levels", {"name_en": "Junior", "name_ar": "مبتدئ", "rank_no": 1}, hr)
+check("level 1", s == 201, f"{s} {r}")
+s, r = call("POST", "/career/levels", {"name_en": "Senior", "rank_no": 2, "min_months": 12, "min_points": 100, "skills": [{"skill_id": S1, "min": 3}]}, hr)
+check("level 2 with requirements", s == 201 and r[1]["skills"][0]["nameEn"] == "Selling", f"{s} {r}")
+s, r = call("POST", "/career/levels", {"name_en": "Lead", "rank_no": 3, "min_months": 36, "min_points": 500, "skills": [{"skill_id": S1, "min": 4}, {"skill_id": S2, "min": 3}]}, hr)
+check("level 3", s == 201 and len(r) == 3, f"{s}")
+LV = {l["rankNo"]: l["id"] for l in r}
+s, r = call("POST", "/career/levels", {"name_en": "Dup", "rank_no": 2}, hr)
+check("duplicate rank refused", s == 409, f"{s}")
+s, r = call("POST", "/career/levels", {"name_en": "Bad", "rank_no": 9, "skills": [{"skill_id": 999999, "min": 3}]}, hr)
+check("unknown skill in a requirement refused", s == 422, f"{s}")
+s, r = call("POST", "/career/levels", {"name_en": "Bad", "rank_no": 9, "skills": [{"skill_id": S1, "min": 7}]}, hr)
+check("skill level above 5 refused", s == 422, f"{s}")
+s, r = call("GET", "/career/levels", None, a_tok)
+check("everyone can read the ladder", s == 200 and len(r) == 3, f"{s}")
+
+print("== placing people and reading the plan")
+s, r = call("GET", "/career/me", None, a_tok)
+check("not placed yet: next is the first level", s == 200 and r["current"] is None and r["next"]["nameEn"] == "Junior", f"{s} {r}")
+s, r = call("PUT", f"/career/employees/{A}/level", {"level_id": LV[1]}, hr)
+check("HR places Alia on Junior", s == 200 and r["current"]["nameEn"] == "Junior" and r["next"]["nameEn"] == "Senior", f"{s} {r}")
+s, r = call("PUT", f"/career/employees/{A}/level", {"level_id": LV[1]}, boss_tok)
+check("a manager cannot place people", s == 403, f"{s}")
+s, r = call("GET", "/career/me", None, a_tok)
+kinds = {b["type"] for b in r["blockers"]}
+check("Alia: tenure fine, points and a skill are missing", kinds == {"points", "skill"} and r["monthsOfService"] >= 19 and r["ready"] is False, f"{r}")
+check("ETA unknown while a skill is missing", r["etaMonths"] is None, f"{r['etaMonths']}")
+
+print("== points and skills move her forward")
+for _ in range(8):
+    call("POST", "/points/adjust", {"employee_id": A, "color": "green", "note": "great sale"}, hr)
+s, r = call("GET", "/career/me", None, a_tok)
+pt = [b for b in r["blockers"] if b["type"] == "points"][0]
+check("8 green points = 80 of the 100 needed", pt["have"] == 80 and pt["left"] == 20, f"{pt}")
+s, r = call("PUT", f"/career/employees/{A}/skills", {"skills": [{"skill_id": S1, "proficiency": 3}]}, a_tok)
+check("she cannot rate her own skills", s == 403, f"{s}")
+s, r = call("PUT", f"/career/employees/{A}/skills", {"skills": [{"skill_id": S1, "proficiency": 3}]}, out_tok)
+check("another employee cannot", s == 403, f"{s}")
+s, r = call("PUT", f"/career/employees/{A}/skills", {"skills": [{"skill_id": S1, "proficiency": 9}]}, boss_tok)
+check("proficiency above 5 refused", s == 422, f"{s}")
+s, r = call("PUT", f"/career/employees/{A}/skills", {"skills": [{"skill_id": S1, "proficiency": 3}]}, boss_tok)
+check("her manager records Selling = 3", s == 200 and not [b for b in r["blockers"] if b["type"] == "skill"], f"{s} {r}")
+check("now only points are missing and an ETA is estimated", [b["type"] for b in r["blockers"]] == ["points"] and r["etaMonths"] is not None and r["etaMonths"] <= 2 and 70 <= r["readiness"] < 100, f"{r['blockers']} {r['etaMonths']} {r['readiness']}")
+for _ in range(3):
+    call("POST", "/points/adjust", {"employee_id": A, "color": "green"}, hr)
+s, r = call("GET", "/career/me", None, a_tok)
+check("110 points: ready for Senior (100%)", r["ready"] is True and r["readiness"] == 100 and r["blockers"] == [] and r["etaMonths"] == 0, f"{r}")
+
+print("== team view")
+s, r = call("GET", "/career/team", None, boss_tok)
+check("manager sees their team with who is ready", s == 200 and len(r) == 2 and [x for x in r if x["employeeId"] == A][0]["ready"] is True, f"{s} {r}")
+s, r = call("GET", "/career/team", None, a_tok)
+check("a normal employee has no team view", s == 403, f"{s}")
+s, r = call("GET", f"/career/employee/{B}", None, a_tok)
+check("a colleague's plan is private", s == 403, f"{s}")
+s, r = call("GET", f"/career/employee/{A}", None, boss_tok)
+check("her manager can read her plan", s == 200 and r["ready"] is True, f"{s}")
+
+print("== promotion through the normal flow")
+s, r = call("POST", f"/career/employees/{B}/promote", {}, hr)
+check("someone not on the ladder is placed on its first level (it has no requirements)", s == 201 and r["current"]["nameEn"] == "Junior", f"{s} {r}")
+s, r = call("POST", f"/career/employees/{B}/promote", {}, hr)
+check("promoting someone who has not met the next level's requirements is refused", s == 409, f"{s} {r}")
+s, r = call("POST", f"/career/employees/{A}/promote", {"salary": 9000}, boss_tok)
+check("a manager cannot promote", s == 403, f"{s}")
+s, r = call("POST", f"/career/employees/{A}/promote", {"salary": 9000, "note": "Hit every target"}, hr)
+check("HR promotes Alia: level 2, plan moves on to Lead", s == 201 and r["current"]["nameEn"] == "Senior" and r["next"]["nameEn"] == "Lead", f"{s} {r}")
+s, r = call("GET", f"/employees/{A}", None, hr)
+check("the employee file changed position and salary", r.get("position") == "Senior" and float(r.get("salary")) == 9000.0, f"{r.get('position')} {r.get('salary')}")
+s, r = call("GET", f"/employees/{A}/promotions", None, hr)
+check("a promotion record exists", s == 200 and any(p["toPosition"] == "Senior" for p in (r if isinstance(r, list) else r.get("items", []))), f"{s} {r}")
+s, r = call("GET", "/notifications", None, a_tok)
+check("she was notified of the promotion", any(n.get("type") == "promotion" for n in r.get("items", [])), f"{r}")
+s, r = call("GET", "/career/me", None, a_tok)
+check("Lead now needs 36 months: tenure is a blocker", any(b["type"] == "tenure" for b in r["blockers"]), f"{r['blockers']}")
+s, r = call("PUT", f"/career/employees/{B}/level", {"level_id": LV[3]}, hr)
+check("top level has no next", r["topLevel"] is True and r["next"] is None, f"{r}")
+
+print("== ladder maintenance is safe")
+s, r = call("DELETE", f"/career/levels/{LV[2]}", None, hr)
+check("a level with people on it cannot be deleted", s == 409, f"{s}")
+s, r = call("DELETE", f"/career/skills/{S1}", None, hr)
+check("a skill still required by a level cannot be deleted", s == 409, f"{s}")
+s, r = call("PUT", f"/career/levels/{LV[3]}", {"min_points": 450}, hr)
+check("a level can be edited", s == 200 and [l for l in r if l["id"] == LV[3]][0]["minPoints"] == 450, f"{s}")
+
+print("== off closes it, data stays")
+switch(C, career_path=False)
+s, r = call("GET", "/career/me", None, a_tok)
+check("closed again", s == 403 and r.get("code") == "feature_disabled", f"{s}")
+switch(C, career_path=True)
+s, r = call("GET", "/career/me", None, a_tok)
+check("back on: her level is still Senior", s == 200 and r["current"]["nameEn"] == "Senior", f"{s}")
+
+finish()

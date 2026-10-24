@@ -1,0 +1,19 @@
+packages:
+  "framer-motion": "For page transitions and interactive micro-animations"
+  "recharts": "For beautiful dashboard analytics and charts"
+  "date-fns": "For human-readable date formatting and manipulation"
+  "clsx": "For conditional class names"
+  "tailwind-merge": "For merging tailwind classes safely"
+
+images:
+  - path: "artifacts/hr-portal/public/images/logo-icon.png"
+    description: "Minimalist modern geometric abstract logo mark in deep corporate blue and slate, clean vector style, transparent background"
+    aspect_ratio: "1:1"
+  - path: "artifacts/hr-portal/public/images/login-bg.png"
+    description: "Abstract soft gradient mesh background in deep indigo and slate blue, corporate professional lighting, smooth"
+    aspect_ratio: "16:9"
+
+notes:
+  - React Query hooks are imported from @workspace/api-client-react
+  - Forms use native validation with FormData for rapid execution and robustness
+  - Shadcn UI components are assumed to be available in @/components/ui/

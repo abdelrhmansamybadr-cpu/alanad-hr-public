@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "HR Portal"
+version = "1.0.0"
+id = "artifacts/hr-portal"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24408
+
+[services.development]
+run = "pnpm --filter @workspace/hr-portal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/hr-portal", "run", "build" ]
+publicDir = "artifacts/hr-portal/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24408"
+BASE_PATH = "/"
