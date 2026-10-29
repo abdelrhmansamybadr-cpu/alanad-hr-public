@@ -20,15 +20,36 @@ function handle_company(string $path, string $method, array $body): void {
         return;
     }
 
+    // Which ways of sending invitations work on this server (shown to HR before they choose e-mail or SMS)
+    if ($sub === 'messaging' && $method === 'GET') {
+        require_hr();
+        require_once __DIR__ . '/../helpers/mailer.php';
+        require_once __DIR__ . '/../helpers/sms.php';
+        json_response(['success' => true, 'data' => [
+            'email' => ['transport' => mail_transport_name(), 'smtp' => mail_smtp_configured()],
+            'sms'   => ['configured' => sms_configured(), 'provider' => sms_provider()],
+        ]]);
+    }
+
     if ($sub === 'test-email') {
         if ($method !== 'POST') error_response('Method not allowed', 405);
         require_admin();
         $me = me();
         require_once __DIR__ . '/../helpers/mailer.php';
         $name = (string)(company_get($pdo, cid())['name'] ?? 'Al Anad HR');
+        $to = trim((string)($body['to'] ?? '')) ?: (string)$me['email'];
         $html = mail_template($name, 'Test message', 'رسالة تجريبية', 'E-mail from Al Anad HR is working. You can now send invitations and password codes by e-mail.', 'البريد الإلكتروني من Al Anad HR يعمل. يمكنك الآن إرسال الدعوات ورموز كلمة المرور بالبريد.');
-        $ok = mail_send((string)$me['email'], "$name: test message", $html, $name);
-        json_response(['success' => true, 'data' => ['emailed' => $ok, 'to' => $me['email']]]);
+        $ok = mail_send($to, "$name: test message", $html, $name);
+        json_response(['success' => true, 'data' => ['emailed' => $ok, 'to' => $to, 'transport' => mail_transport_name(), 'error' => $ok ? null : mail_last_error()]]);
+    }
+
+    if ($sub === 'test-sms') {
+        if ($method !== 'POST') error_response('Method not allowed', 405);
+        require_admin();
+        require_once __DIR__ . '/../helpers/sms.php';
+        $name = (string)(company_get($pdo, cid())['name'] ?? 'Al Anad HR');
+        [$ok, $err] = sms_send((string)($body['to'] ?? ''), "$name: test message / رسالة تجريبية");
+        json_response(['success' => true, 'data' => ['sent' => $ok, 'error' => $err, 'provider' => sms_provider()]]);
     }
 
     switch ($method) {

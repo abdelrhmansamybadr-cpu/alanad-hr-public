@@ -3,6 +3,7 @@ import { navigate } from "wouter/use-browser-location";
 import { Phone, PhoneOff, Video } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/http";
+import { audioReady, startRing, unlockAudio } from "@/lib/sound";
 import { Meeting, MeetingSession } from "@/lib/meetingCall";
 
 interface MeetingCtx {
@@ -32,23 +33,6 @@ export function useMeeting() {
 
 interface Ring { id: number; title: string; hostName: string }
 
-/** A repeating phone-like double beep (Web Audio). Returns a function that stops it. */
-function startRingtone(): () => void {
-  let ctx: AudioContext | null = null;
-  try { ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); void ctx.resume(); } catch { return () => {}; }
-  const c = ctx;
-  const beep = () => {
-    [0, 0.28].forEach((d) => {
-      const o = c.createOscillator(); const g = c.createGain();
-      o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.15;
-      o.connect(g); g.connect(c.destination);
-      o.start(c.currentTime + d); o.stop(c.currentTime + d + 0.2);
-    });
-  };
-  beep();
-  const t = setInterval(beep, 1600);
-  return () => { clearInterval(t); void c.close().catch(() => {}); };
-}
 
 export function MeetingProvider({ children }: { children: ReactNode }) {
   const { user, company } = useAuth();
@@ -115,19 +99,33 @@ export function MeetingProvider({ children }: { children: ReactNode }) {
   // while ringing: sound, flashing tab title, system notification
   useEffect(() => {
     if (!ring) return;
-    const stopTone = startRingtone();
+    const stopTone = startRing();
     const original = document.title;
     let on = true;
     const flash = setInterval(() => { document.title = on ? `📞 ${ring.title}` : original; on = !on; }, 900);
     let n: Notification | null = null;
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        n = new Notification("Incoming meeting", { body: ring.title, tag: `ring-${ring.id}` });
+        // stays on screen until answered (requireInteraction) and makes the system's notification sound
+        n = new Notification("Incoming meeting · اجتماع وارد", { body: ring.hostName ? `${ring.title} — ${ring.hostName}` : ring.title, tag: `ring-${ring.id}`, requireInteraction: true, silent: false, icon: "/favicon.ico" } as NotificationOptions);
         n.onclick = () => { window.focus(); n?.close(); };
       }
     } catch { /* ignore */ }
     return () => { stopTone(); clearInterval(flash); document.title = original; n?.close(); };
   }, [ring]);
+
+  // Sound needs one click on the page first (browser rule), and the system notification needs permission: offer both in one click.
+  const [soundReady, setSoundReady] = useState(audioReady());
+  useEffect(() => {
+    if (!ring) return;
+    const t = setInterval(() => setSoundReady(audioReady()), 500);
+    return () => clearInterval(t);
+  }, [ring]);
+  const enableAlerts = () => {
+    unlockAudio();
+    setSoundReady(audioReady());
+    try { if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission(); } catch { /* ignore */ }
+  };
 
   const joinRing = () => { if (!ring) return; handled.current.add(ring.id); const id = ring.id; setRing(null); navigate(`/meetings/${id}`); };
   const declineRing = () => { if (!ring) return; handled.current.add(ring.id); const id = ring.id; setRing(null); void api(`/meetings/${id}/dismiss`, "POST").catch(() => {}); };
@@ -142,6 +140,9 @@ export function MeetingProvider({ children }: { children: ReactNode }) {
             <p className="text-white/70">Incoming meeting · اجتماع وارد</p>
             <h2 className="text-3xl font-extrabold">{ring.title}</h2>
             {ring.hostName && <p className="text-white/70">{ring.hostName}</p>}
+            {!soundReady && (
+              <button onClick={enableAlerts} className="mx-auto block rounded-full bg-white/15 hover:bg-white/25 px-4 py-2 text-sm">🔔 Click here to turn the ring sound on · اضغط لتشغيل صوت الرنين</button>
+            )}
             <div className="flex justify-center gap-12 pt-4">
               <button onClick={declineRing} className="flex flex-col items-center gap-2" aria-label="Decline"><span className="h-16 w-16 rounded-full bg-red-500 flex items-center justify-center"><PhoneOff className="h-7 w-7" /></span><span className="text-sm">Decline · رفض</span></button>
               <button onClick={joinRing} className="flex flex-col items-center gap-2" aria-label="Join"><span className="h-16 w-16 rounded-full bg-emerald-500 flex items-center justify-center"><Phone className="h-7 w-7" /></span><span className="text-sm">Join · انضمام</span></button>

@@ -24,6 +24,8 @@ import {
   Heart,
   Layers,
   Video,
+  Award,
+  FileClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLang } from "@/contexts/LanguageContext";
@@ -62,6 +64,18 @@ export function Sidebar() {
       module: "dashboard",
     },
     { name: t.employees, href: "/employees", icon: Users, module: "employees" },
+    {
+      name: isRTL ? "العقود" : "Contracts",
+      href: "/contracts",
+      icon: FileClock,
+      module: "employees",
+    },
+    {
+      name: isRTL ? "الشهادات" : "Certificates",
+      href: "/certificates",
+      icon: Award,
+      module: "documents",
+    },
     {
       name: t.departments,
       href: "/departments",

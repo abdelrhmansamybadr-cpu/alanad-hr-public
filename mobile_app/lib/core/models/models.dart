@@ -160,6 +160,33 @@ class Employee {
   final String? inviteCode; // present only right after creating an employee
   final DateTime? terminationDate;
   final String? terminationReason;
+  final String? contractType; // permanent | fixed_term | probation | part_time | temporary | internship
+  final DateTime? contractStart;
+  final DateTime? contractEnd;
+  final int? contractMonths;
+  final bool hasEmailFlag;
+  final bool hasPhoneFlag;
+  final bool hasAccount;
+  final bool inviteReady;
+  final List<String> missing; // contact | department | position | start_date | salary
+  final DateTime? invitedAt;
+  final String? invitedVia;
+  final String? nationality;
+  final String? idNumber;
+  final String? bankIban;
+  final String? workStatus; // own_sponsor | other_sponsor | irregular
+  final DateTime? iqamaExpiry;
+  final int? iqamaRenewMonths;
+  final String? importNotes;
+  final String attendanceMode; // company | rule | free
+  final int? attendanceRuleId;
+  final bool attendanceBlocked;
+  final DateTime? firstSigninAt;
+  final String? attendanceBlockReason;
+  final bool shared; // another company of the group shares this person with us (read-only)
+  final String? sharedFrom;
+  final int sharedCount; // how many other companies this person is shared with
+  final String? companyName;
 
   const Employee({
     required this.id,
@@ -186,6 +213,33 @@ class Employee {
     this.inviteCode,
     this.terminationDate,
     this.terminationReason,
+    this.contractType,
+    this.contractStart,
+    this.contractEnd,
+    this.contractMonths,
+    this.hasEmailFlag = true,
+    this.hasPhoneFlag = true,
+    this.hasAccount = false,
+    this.inviteReady = false,
+    this.missing = const [],
+    this.invitedAt,
+    this.invitedVia,
+    this.nationality,
+    this.idNumber,
+    this.bankIban,
+    this.workStatus,
+    this.iqamaExpiry,
+    this.iqamaRenewMonths,
+    this.importNotes,
+    this.attendanceMode = 'company',
+    this.attendanceRuleId,
+    this.attendanceBlocked = false,
+    this.firstSigninAt,
+    this.attendanceBlockReason,
+    this.shared = false,
+    this.sharedFrom,
+    this.sharedCount = 0,
+    this.companyName,
   });
 
   factory Employee.fromJson(dynamic raw) {
@@ -215,8 +269,39 @@ class Employee {
       inviteCode: jStrN(m, 'inviteCode'),
       terminationDate: jDate(m, 'terminationDate'),
       terminationReason: jStrN(m, 'terminationReason'),
+      contractType: jStrN(m, 'contractType'),
+      contractStart: jDate(m, 'contractStart'),
+      contractEnd: jDate(m, 'contractEnd'),
+      contractMonths: jIntN(m, 'contractMonths'),
+      hasEmailFlag: m.containsKey('hasEmail') ? m['hasEmail'] == true : jStr(m, 'email').isNotEmpty,
+      hasPhoneFlag: m.containsKey('hasPhone') ? m['hasPhone'] == true : jStr(m, 'phone').isNotEmpty,
+      hasAccount: m['hasAccount'] == true,
+      inviteReady: m['inviteReady'] == true,
+      missing: [for (final x in (m['missing'] is List ? m['missing'] as List : const [])) x.toString()],
+      invitedAt: jDate(m, 'invitedAt'),
+      invitedVia: jStrN(m, 'invitedVia'),
+      nationality: jStrN(m, 'nationality'),
+      idNumber: jStrN(m, 'idNumber'),
+      bankIban: jStrN(m, 'bankIban'),
+      workStatus: jStrN(m, 'workStatus'),
+      iqamaExpiry: jDate(m, 'iqamaExpiry'),
+      iqamaRenewMonths: jIntN(m, 'iqamaRenewMonths'),
+      importNotes: jStrN(m, 'importNotes'),
+      attendanceMode: jStr(m, 'attendanceMode', 'company'),
+      attendanceRuleId: jIntN(m, 'attendanceRuleId'),
+      attendanceBlocked: m['attendanceBlocked'] == true || m['attendanceBlocked'] == 1 || m['attendanceBlocked'] == '1',
+      attendanceBlockReason: jStrN(m, 'attendanceBlockReason'),
+      firstSigninAt: jDate(m, 'firstSigninAt'),
+      shared: m['shared'] == true,
+      sharedFrom: jStrN(m, 'sharedFrom'),
+      sharedCount: jInt(m, 'sharedCount'),
+      companyName: jStrN(m, 'companyName'),
     );
   }
+
+  bool get hasEmail => hasEmailFlag && email.isNotEmpty;
+  bool get hasPhone => hasPhoneFlag && (phone ?? '').isNotEmpty;
+  bool get incomplete => missing.isNotEmpty;
 
   String get fullName => '$firstName $lastName'.trim();
 }
@@ -231,7 +316,10 @@ class Department {
   final String? headPosition;
   final int employeeCount;
   final List<Employee> members;
-  const Department({required this.id, required this.name, this.description, this.headId, this.headName, this.headAvatar, this.headPosition, this.employeeCount = 0, this.members = const []});
+  final bool shared; // shared into this company by another one: read-only here
+  final String? sharedFrom;
+  final int sharedCount;
+  const Department({required this.id, required this.name, this.description, this.headId, this.headName, this.headAvatar, this.headPosition, this.employeeCount = 0, this.members = const [], this.shared = false, this.sharedFrom, this.sharedCount = 0});
 
   String? get managerName => headName;
 
@@ -247,6 +335,9 @@ class Department {
       headPosition: jStrN(m, 'headPosition'),
       employeeCount: jInt(m, 'employeeCount'),
       members: asMapList(m['members']).map(Employee.fromJson).toList(),
+      shared: m['shared'] == true,
+      sharedFrom: jStrN(m, 'sharedFrom'),
+      sharedCount: jInt(m, 'sharedCount'),
     );
   }
 }
@@ -371,6 +462,7 @@ class TodayInfo {
   final bool locationRequired;
   final bool wifiRequired;
   final String? wifiSsid;
+  final String wifiNetworkType; // wifi | wired
   final double? radiusM;
   final String? holiday;
   final String? onLeave;
@@ -395,6 +487,7 @@ class TodayInfo {
     this.locationRequired = false,
     this.wifiRequired = false,
     this.wifiSsid,
+    this.wifiNetworkType = 'wifi',
     this.radiusM,
     this.holiday,
     this.onLeave,
@@ -429,6 +522,7 @@ class TodayInfo {
       locationRequired: rule != null && jBool(rule, 'locationEnabled'),
       wifiRequired: rule != null && jBool(rule, 'wifiEnabled'),
       wifiSsid: rule == null ? null : jStrN(rule, 'wifiSsid'),
+      wifiNetworkType: rule == null || jStrN(rule, 'networkType') != 'wired' ? 'wifi' : 'wired',
       radiusM: rule == null ? null : jDoubleN(rule, 'radiusM'),
       holiday: jStrN(m, 'holiday'),
       onLeave: leave == null ? null : (jStrN(leave, 'typeName') ?? jStr(leave, 'type')),
@@ -1014,14 +1108,15 @@ class StaffMember {
   final String status;
   final String? title;
   final Map<String, bool> permissions;
-  const StaffMember({required this.id, required this.name, required this.email, required this.role, this.status = 'active', this.title, this.permissions = const {}});
+  final bool isOwner; // the platform owner's account: only the owner can change it
+  const StaffMember({required this.id, required this.name, required this.email, required this.role, this.status = 'active', this.title, this.permissions = const {}, this.isOwner = false});
   factory StaffMember.fromJson(dynamic raw) {
     final m = asMap(raw);
     final perms = <String, bool>{};
     for (final p in asMapList(m['permissions'])) {
       perms[jStr(p, 'module')] = jBool(p, 'enabled', true);
     }
-    return StaffMember(id: jInt(m, 'id'), name: jStr(m, 'name'), email: jStr(m, 'email'), role: jStr(m, 'role'), status: jStr(m, 'status', 'active'), title: jStrN(m, 'title'), permissions: perms);
+    return StaffMember(id: jInt(m, 'id'), name: jStr(m, 'name'), email: jStr(m, 'email'), role: jStr(m, 'role'), status: jStr(m, 'status', 'active'), title: jStrN(m, 'title'), permissions: perms, isOwner: m['isOwner'] == true);
   }
 }
 

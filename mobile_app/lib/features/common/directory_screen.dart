@@ -8,6 +8,7 @@ import '../../app/theme.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../../core/session/session.dart';
 import '../data/providers.dart';
 import '../premium/complaints_screens.dart';
@@ -76,7 +77,7 @@ class _DirectoryScreenState extends ConsumerState<DirectoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final list = ref.watch(directoryProvider(_q));
+    final list = ref.watch(directoryAllProvider(_q));
     return Scaffold(
       appBar: AppBar(title: Text(context.t('home.qa.directory'))),
       body: Column(children: [
@@ -94,16 +95,16 @@ class _DirectoryScreenState extends ConsumerState<DirectoryScreen> {
         Expanded(
           child: AsyncBody<List<Employee>>(
             value: list,
-            onRetry: () => ref.invalidate(directoryProvider(_q)),
+            onRetry: () => ref.invalidate(directoryAllProvider(_q)),
             builder: (items) => items.isEmpty
                 ? EmptyState(icon: Icons.person_search_rounded, title: context.t('common.no_results'))
-                : ListView.separated(
+                : AdaptiveList(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                     itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    gap: 10,
                     itemBuilder: (_, i) {
                       final e = items[i];
-                      return RowTile(leading: Avatar(name: e.fullName, url: e.avatar, size: 48), title: e.fullName, subtitle: [e.position, if (e.departmentName != null) e.departmentName!].where((s) => s.isNotEmpty).join(' · '), onTap: () => showContactSheet(context, e));
+                      return RowTile(leading: Avatar(name: e.fullName, url: e.avatar, size: 48), title: e.fullName, subtitle: [e.position, if (e.departmentName != null) e.departmentName!, if (e.sharedFrom != null) e.sharedFrom!].where((s) => s.isNotEmpty).join(' · '), onTap: () => showContactSheet(context, e));
                     },
                   ),
           ),
@@ -132,11 +133,11 @@ class TeamScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(teamProvider),
           builder: (rows) => rows.isEmpty
               ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.groups_rounded, title: context.t('team.empty')))])
-              : ListView.separated(
+              : AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: rows.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) {
                     final r = rows[i];
                     return RowTile(

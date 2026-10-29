@@ -116,6 +116,8 @@ function attendance_coord($body, string $k): ?float {
  */
 function attendance_day_status(PDO $pdo, array $emp, string $date, DateTime $now, ?array $rec, ?array $leave, ?string $holiday): string {
     if ($rec) return $rec['status'];
+    $from = att_tracking_start($pdo, (int)$emp['id']);
+    if ($from === null || $date < $from) return 'not_started';          // not signed in yet: not counted
     if ($leave) return 'on_leave';
     if ($holiday) return 'holiday';
     $shift = att_shift($pdo, $emp);
@@ -176,6 +178,7 @@ function attendance_rules_summary(PDO $pdo): ?array {
         'wifi_ssid' => implode(', ', array_unique(array_map(fn($r) => $r['wifi_ssid'], $wifi))) ?: null,
         'radius_m' => $loc ? min(array_map(fn($r) => (float)$r['location_radius_km'] * 1000, $loc)) : null,
         'match_mode' => $rules[0]['match_mode'] ?? 'any',
+        'network_type' => $wifi ? ($wifi[0]['network_type'] ?? 'wifi') : null,
         'count' => count($rules),
     ];
 }
@@ -271,7 +274,7 @@ function attendance_summary(PDO $pdo): void {
         if ($ds > $now->format('Y-m-d')) continue;
         $st = attendance_day_status($pdo, $emp, $ds, $now, null, attendance_on_leave($pdo, $employeeId, $ds), attendance_holiday($pdo, $ds));
         if ($st === 'absent') { $absent++; }
-        if ($st !== 'not_in') $days[$ds] = $st;
+        if ($st !== 'not_in' && $st !== 'not_started') $days[$ds] = $st;
     }
 
     $lv = $pdo->prepare(
@@ -313,7 +316,7 @@ function attendance_board(PDO $pdo): void {
     $rows = $s->fetchAll();
     $holiday = attendance_holiday($pdo, $date);
 
-    $counts = ['present' => 0, 'late' => 0, 'half_day' => 0, 'absent' => 0, 'on_leave' => 0, 'not_in' => 0, 'off' => 0];
+    $counts = ['present' => 0, 'late' => 0, 'half_day' => 0, 'absent' => 0, 'on_leave' => 0, 'not_in' => 0, 'off' => 0, 'not_started' => 0];
     $out = [];
     foreach ($rows as $e) {
         $rec = $e['attendance_id'] ? ['status' => $e['att_status']] : null;
@@ -329,6 +332,7 @@ function attendance_board(PDO $pdo): void {
             'flags' => $e['flags'], 'out_zone_minutes' => $e['out_zone_minutes'] ?? 0, 'outside_now' => $e['last_ping_inside'] !== null && (int)$e['last_ping_inside'] === 0 && !$e['check_out'],
             'early_leave_minutes' => $e['early_leave_minutes'] ?? 0, 'overtime_minutes' => $e['overtime_minutes'] ?? 0,
             'leave_type' => $leave['type_name'] ?? null, 'security_flags' => $e['security_flags'] ?? null,
+            'tracking_from' => att_tracking_start($pdo, (int)$e['id']),
         ];
     }
     json_response(['success' => true, 'data' => [
@@ -339,11 +343,35 @@ function attendance_board(PDO $pdo): void {
 
 // ---------------------------------------------------------- mobile check-in / ping / out
 
+/** HR can block a person from recording attendance. */
+function attendance_assert_allowed(array $emp): void {
+    if (!empty($emp['attendance_blocked'])) {
+        error_response('Recording attendance is blocked for your account. Please contact HR.' . (!empty($emp['attendance_block_reason']) ? ' (' . $emp['attendance_block_reason'] . ')' : ''), 403);
+    }
+}
+
+/** Somebody tried to record attendance away from the workplace: keep the attempt and tell HR (at most once an hour per person). */
+function attendance_log_attempt(PDO $pdo, array $emp, string $action, array $zone, array $body): void {
+    try {
+        $now = att_now($pdo)->format('Y-m-d H:i:s');
+        $recent = $pdo->prepare("SELECT 1 FROM attendance_attempts WHERE company_id = ? AND employee_id = ? AND created_at > (? - INTERVAL 1 HOUR) LIMIT 1");
+        $recent->execute([cid(), $emp['id'], $now]);
+        $first = !$recent->fetchColumn();
+        $pdo->prepare("INSERT INTO attendance_attempts (company_id, employee_id, action, lat, lng, distance_m, message, created_at) VALUES (?,?,?,?,?,?,?,?)")
+            ->execute([cid(), $emp['id'], $action, attendance_coord($body, 'lat'), attendance_coord($body, 'lng'), $zone['distance_m'] !== null ? (int)round($zone['distance_m']) : null, mb_substr((string)$zone['message'], 0, 250), $now]);
+        if ($first) {
+            $name = trim($emp['first_name'] . ' ' . $emp['last_name']);
+            notify_hr($pdo, 'security_flag', 'Attendance tried away from the workplace', "$name tried to " . str_replace('_', ' ', $action) . ' away from the workplace. You can block this person in the employee page.', ['employee_id' => (int)$emp['id']]);
+        }
+    } catch (Throwable $e) { error_log('attempt log: ' . $e->getMessage()); }
+}
+
 function attendance_check_in(array $body, PDO $pdo): void {
     $employeeId = own_employee_id();
     $emp = $employeeId > 0 ? att_employee_row($pdo, $employeeId) : null;
     if (!$emp) error_response('No employee record linked to this account', 404);
     if ($emp['status'] === 'inactive') error_response('Your employee account is inactive', 403);
+    attendance_assert_allowed($emp);
 
     $trust = attendance_prepare($body, $pdo, 'check_in', $employeeId);     // fake GPS, shared phone, offline sync
     $now   = att_now($pdo);
@@ -356,8 +384,8 @@ function attendance_check_in(array $body, PDO $pdo): void {
     if ($ex->fetchColumn()) error_response('You have already checked in today.', 409);
     if (attendance_open_record($pdo, $employeeId, $now)) error_response('You are still checked in from yesterday. Please check out first.', 409);
 
-    $zone = att_zone($pdo, $body);
-    if ($zone['constrained'] && !$zone['inside']) error_response($zone['message'], 422);
+    $zone = att_zone($pdo, $body, $emp);
+    if ($zone['constrained'] && !$zone['inside']) { attendance_log_attempt($pdo, $emp, 'check_in', $zone, $body); error_response($zone['message'], 422); }
 
     $pdo->prepare(
         "INSERT INTO attendance (company_id, employee_id, date, check_in, status, source, check_in_lat, check_in_lng, check_in_inside,
@@ -399,7 +427,7 @@ function attendance_ping(array $body, PDO $pdo): void {
     attendance_save_security($pdo, (int)$rec['id'], $trust);
 
     $p    = att_policy($pdo);
-    $zone = att_zone($pdo, $body);
+    $zone = att_zone($pdo, $body, att_employee_row($pdo, $employeeId));
     $stamp = $now->format('Y-m-d H:i:s');
     $out  = (int)$rec['out_zone_minutes'];
     $before = $out;
@@ -436,6 +464,8 @@ function attendance_check_out(array $body, PDO $pdo): void {
     $employeeId = own_employee_id();
     if ($employeeId <= 0 || !employee_in_company($pdo, $employeeId)) error_response('No employee record linked to this account', 404);
 
+    $empRow = att_employee_row($pdo, $employeeId);
+    if ($empRow) attendance_assert_allowed($empRow);
     $trust = attendance_prepare($body, $pdo, 'check_out', $employeeId);
     $now = att_now($pdo);
     $rec = attendance_open_record($pdo, $employeeId, $now);
@@ -443,8 +473,8 @@ function attendance_check_out(array $body, PDO $pdo): void {
     attendance_save_security($pdo, (int)$rec['id'], $trust);
 
     $p    = att_policy($pdo);
-    $zone = att_zone($pdo, $body);
-    if ($zone['constrained'] && !$zone['inside'] && !$p['allow_checkout_outside']) error_response($zone['message'], 422);
+    $zone = att_zone($pdo, $body, $empRow);
+    if ($zone['constrained'] && !$zone['inside'] && !$p['allow_checkout_outside']) { if ($empRow) attendance_log_attempt($pdo, $empRow, 'check_out', $zone, $body); error_response($zone['message'], 422); }
 
     $out = (int)$rec['out_zone_minutes'];
     if ($zone['constrained'] && !$zone['inside']) {

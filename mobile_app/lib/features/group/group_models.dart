@@ -130,9 +130,40 @@ class AccessGrant {
       );
 }
 
+/// One HR admin / HR manager account of the group, as the owner sees it (any status).
+class HrAccount {
+  final int id;
+  final String name;
+  final String email;
+  final String role; // hr_admin | hr_manager
+  final String status; // active | suspended | disabled
+  final String companyName;
+  final bool isSuperAdmin;
+  final bool isOwner;
+  final int extraCompanies;
+  final DateTime? lastLoginAt;
+  const HrAccount({required this.id, required this.name, required this.email, required this.role, required this.status, required this.companyName, required this.isSuperAdmin, required this.isOwner, required this.extraCompanies, this.lastLoginAt});
+
+  bool get isActive => status == 'active';
+
+  factory HrAccount.fromJson(Map<String, dynamic> m) => HrAccount(
+        id: jInt(m, 'id'),
+        name: jStr(m, 'name'),
+        email: jStr(m, 'email'),
+        role: jStr(m, 'role'),
+        status: jStr(m, 'status', 'active'),
+        companyName: jStr(m, 'companyName'),
+        isSuperAdmin: jBool(m, 'isSuperAdmin'),
+        isOwner: jBool(m, 'isOwner'),
+        extraCompanies: jInt(m, 'extraCompanies'),
+        lastLoginAt: jDate(m, 'lastLoginAt'),
+      );
+}
+
 List<T> _list<T>(dynamic data, T Function(Map<String, dynamic>) parse) => data is List ? data.whereType<Map>().map((e) => parse(asMap(e))).toList() : <T>[];
 
 /// Super admin: every company of the group with employee and department counts.
 final groupCompaniesProvider = FutureProvider.autoDispose<GroupInfo>((ref) async => GroupInfo.fromJson(asMap(await ref.read(apiProvider).get('/group/companies'))));
 final groupPeopleProvider = FutureProvider.autoDispose<List<GroupPerson>>((ref) async => _list(await ref.read(apiProvider).get('/group/people'), GroupPerson.fromJson));
+final hrAccountsProvider = FutureProvider.autoDispose<List<HrAccount>>((ref) async => _list(await ref.read(apiProvider).get('/group/hr-accounts'), HrAccount.fromJson));
 final groupAccessProvider = FutureProvider.autoDispose<List<AccessGrant>>((ref) async => _list(await ref.read(apiProvider).get('/group/access'), AccessGrant.fromJson));

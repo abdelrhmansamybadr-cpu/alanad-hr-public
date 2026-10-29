@@ -119,6 +119,22 @@ final employeesProvider = FutureProvider.autoDispose.family<List<Employee>, Stri
   return _list(await _api(ref).get('/employees', query: {if (q.isNotEmpty) 'q': q}), Employee.fromJson);
 });
 
+/// The People list: this company's own people plus those other companies of the group share with it (read-only).
+/// Pickers keep using [employeesProvider] (own people only).
+final peopleListProvider = FutureProvider.autoDispose.family<List<Employee>, String>((ref, q) async {
+  final own = await ref.watch(employeesProvider(q).future);
+  var shared = <Employee>[];
+  try {
+    shared = _list(await _api(ref).get('/employees/shared-in', query: {if (q.isNotEmpty) 'q': q}), Employee.fromJson);
+  } catch (_) {}
+  return [...own, ...shared];
+});
+
+/// Directory screen: colleagues plus people shared by other companies of the group.
+final directoryAllProvider = FutureProvider.autoDispose.family<List<Employee>, String>((ref, q) async {
+  return _list(await _api(ref).get('/directory', query: {'include_shared': '1', if (q.isNotEmpty) 'q': q}), Employee.fromJson);
+});
+
 final employeeProvider = FutureProvider.autoDispose.family<Employee, int>((ref, id) async => Employee.fromJson(await _api(ref).get('/employees/$id')));
 
 final departmentsProvider = FutureProvider.autoDispose<List<Department>>((ref) async => _list(await _api(ref).get('/departments'), Department.fromJson));

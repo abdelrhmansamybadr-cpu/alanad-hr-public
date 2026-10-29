@@ -225,6 +225,7 @@ function payroll_compute(PDO $pdo, array $emp, int $month, int $year): array {
         }
     }
 
+    $trackFrom = att_tracking_start($pdo, $eid);
     $workdays = 0; $absent = 0; $half = 0; $lateMin = 0; $lateDays = 0; $otMin = 0; $unpaid = 0; $counted = 0;
     for ($d = clone $first; $d <= $last; $d->modify('+1 day')) {
         $ds = $d->format('Y-m-d');
@@ -241,7 +242,7 @@ function payroll_compute(PDO $pdo, array $emp, int $month, int $year): array {
             continue;
         }
         if (isset($leaves[$ds])) { if (!$leaves[$ds]) $unpaid++; continue; }
-        if ($ds < $today) { $absent++; $counted++; }              // a finished working day with nothing recorded
+        if ($ds < $today && $trackFrom !== null && $ds >= $trackFrom) { $absent++; $counted++; }   // a finished working day with nothing recorded (only from the first sign-in)
     }
     // overtime on days off also counts
     foreach ($att as $ds => $rec) { if (!att_is_workday($pdo, $shift, $ds) || isset($hol[$ds])) $otMin += (int)$rec['overtime_minutes']; }

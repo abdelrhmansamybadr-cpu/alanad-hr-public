@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
+import 'responsive.dart';
 import '../api/api.dart';
 import '../i18n/strings.dart';
 import 'format.dart';
@@ -545,6 +546,23 @@ String? emailValidator(BuildContext c, String? v) {
   return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim()) ? null : c.t('common.invalid_email');
 }
 
+/// An optional mobile number: empty is fine, otherwise 8 to 15 digits (a leading + and common separators are allowed).
+String? phoneOptionalValidator(BuildContext c, String? v) {
+  final t = (v ?? '').trim();
+  if (t.isEmpty) return null;
+  if (!RegExp(r'^\+?[0-9\s\-().]+$').hasMatch(t)) return c.t('common.invalid_phone');
+  final digits = t.replaceAll(RegExp(r'\D'), '').length;
+  return digits >= 8 && digits <= 15 ? null : c.t('common.invalid_phone');
+}
+
+/// Sign-in name: an e-mail address OR a mobile number.
+String? identityValidator(BuildContext c, String? v) {
+  final t = (v ?? '').trim();
+  if (t.isEmpty) return c.t('common.required');
+  if (t.contains('@')) return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(t) ? null : c.t('common.invalid_email');
+  return phoneOptionalValidator(c, t) == null ? null : c.t('common.invalid_identity');
+}
+
 String? passwordValidator(BuildContext c, String? v) {
   if (v == null || v.isEmpty) return c.t('common.required');
   return v.length >= 8 ? null : c.t('common.min_password');
@@ -566,6 +584,31 @@ void toast(BuildContext context, String message, {bool error = false}) {
 }
 
 Future<T?> showAppSheet<T>(BuildContext context, {required String title, required Widget child, bool scroll = true}) {
+  // On a laptop a sheet that slides up from the bottom looks wrong: show a centred dialog instead.
+  if (context.isDesktop) {
+    return showDialog<T>(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(28),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 620, maxHeight: MediaQuery.sizeOf(ctx).height * 0.88),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 18, 12, 4),
+              child: Row(children: [
+                Expanded(child: Text(title, style: ctx.text.titleLarge)),
+                IconButton(onPressed: () => Navigator.of(ctx).pop(), icon: const Icon(Icons.close_rounded)),
+              ]),
+            ),
+            Flexible(
+              child: scroll ? SingleChildScrollView(padding: const EdgeInsets.fromLTRB(24, 8, 24, 24), child: child) : Padding(padding: const EdgeInsets.fromLTRB(24, 8, 24, 24), child: child),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,

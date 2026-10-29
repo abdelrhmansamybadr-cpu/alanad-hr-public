@@ -10,10 +10,18 @@
  *   POST   /group/companies/:id/ceo        {name, email, password}  new CEO account for the company            (super admin)
  *   GET    /group/people                   HR accounts of the whole group (to pick who gets access)            (super admin)
  *   GET    /group/access                   every extra-access grant                                              (super admin)
+ *   GET    /group/hr-accounts              every HR admin / HR manager account of the group, any status          (owner only)
+ *   PUT    /group/hr-accounts/:id          {status: active|disabled}  close or reopen an HR account            (owner only)
  *   POST   /group/access                   {user_id, company_id, level: full|custom, modules?, read_only?}       (super admin)
  *   DELETE /group/access/:id               take the access away again                                           (super admin)
+ *   GET    /group/shares?kind=employee|department&id=N     which companies this person / department is shared with (HR of the owning company)
+ *   GET    /group/transfer-targets?kind=   companies the caller may move an employee / department into        (HR with full access to both)
+ *   GET    /group/transfer-departments?company_id=N   departments of such a company
+ *   POST   /group/transfer         {kind, id, target_company_id, department_id?, move_members?}  move it to that company
+ *   PUT    /group/shares                   {kind, id, company_ids: []}  share it with exactly these companies   (HR of the owning company)
  */
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/../helpers/transfer.php';
 
 function handle_group(string $path, string $method, array $body): void {
     $pdo = getDB();
@@ -35,6 +43,11 @@ function handle_group(string $path, string $method, array $body): void {
             if ($method !== 'POST') error_response('Method not allowed', 405);
             group_switch($body, $pdo);
             break;
+        case 'search':      // owner only: employee search over every company of the group (the top-bar search box)
+            if ($method !== 'GET') error_response('Method not allowed', 405);
+            require_once __DIR__ . '/employees.php';
+            employees_search_all_companies($pdo, $gid);
+            break;
         case 'companies':
             group_require_super($pdo, $gid);
             if ($id === null) {
@@ -52,6 +65,12 @@ function handle_group(string $path, string $method, array $body): void {
             if ($method !== 'GET') error_response('Method not allowed', 405);
             group_people($pdo, $gid);
             break;
+        case 'hr-accounts':          // the owner's view of every HR manager of the group, and the switch that closes one
+            if (!group_is_owner($pdo, (int)me()['id'])) error_response('Only the owner can do this.', 403);
+            if ($method === 'GET' && $id === null) group_hr_accounts($pdo, $gid);
+            if ($method === 'PUT' && $id !== null) group_hr_account_set($id, $body, $pdo, $gid);
+            error_response('Method not allowed', 405);
+            break;
         case 'access':
             group_require_super($pdo, $gid);
             if ($method === 'GET' && $id === null) group_access_list($pdo, $gid);
@@ -59,9 +78,73 @@ function handle_group(string $path, string $method, array $body): void {
             if ($method === 'DELETE' && $id !== null) group_access_remove($id, $pdo, $gid);
             error_response('Method not allowed', 405);
             break;
+        case 'transfer-targets':
+            require_hr();
+            if ($method !== 'GET') error_response('Method not allowed', 405);
+            json_response(['success' => true, 'data' => transfer_targets($pdo, ($_GET['kind'] ?? '') === 'department' ? 'departments' : 'employees')]);
+            break;
+        case 'transfer-departments':
+            require_hr();
+            if ($method !== 'GET') error_response('Method not allowed', 405);
+            json_response(['success' => true, 'data' => transfer_target_departments($pdo, (int)($_GET['company_id'] ?? 0))]);
+            break;
+        case 'transfer':
+            require_hr();
+            if ($method !== 'POST') error_response('Method not allowed', 405);
+            transfer_run($body, $pdo);
+            break;
+        case 'shares':
+            require_hr();
+            if ($method === 'GET') group_shares_get($pdo);
+            if ($method === 'PUT' || $method === 'POST') group_shares_set($body, $pdo, $gid);
+            error_response('Method not allowed', 405);
+            break;
         default:
             error_response('Not found', 404);
     }
+}
+
+/** The item (own employee / department) a share request is about, or a 404/422. Returns [kind, id]. */
+function group_share_item(PDO $pdo, $kind, $id): array {
+    $kind = (string)$kind;
+    $id = int_or_null($id);
+    if (!in_array($kind, ['employee', 'department'], true)) error_response('kind must be employee or department', 422);
+    if (!in_company($pdo, $kind === 'employee' ? 'employees' : 'departments', $id)) error_response('Not found in this company', 404);
+    return [$kind, (int)$id];
+}
+
+function group_shares_get(PDO $pdo): void {
+    [$kind, $id] = group_share_item($pdo, $_GET['kind'] ?? '', $_GET['id'] ?? null);
+    $on = $pdo->prepare("SELECT target_company_id FROM group_shares WHERE kind = ? AND item_id = ?");
+    $on->execute([$kind, $id]);
+    $shared = array_map('intval', $on->fetchAll(PDO::FETCH_COLUMN));
+    $out = array_map(fn($c) => ['id' => (int)$c['id'], 'name' => $c['name'], 'shared' => in_array((int)$c['id'], $shared, true)], group_share_targets($pdo));
+    json_response(['success' => true, 'data' => ['kind' => $kind, 'item_id' => $id, 'companies' => $out]]);
+}
+
+function group_shares_set(array $body, PDO $pdo, int $gid): void {
+    if (!empty(me()['access_read_only'])) error_response('You have read-only access to this company.', 403);
+    [$kind, $id] = group_share_item($pdo, $body['kind'] ?? '', $body['id'] ?? null);
+    $allowed = array_map(fn($c) => (int)$c['id'], group_share_targets($pdo));
+    $want = array_values(array_unique(array_map('intval', (array)($body['company_ids'] ?? []))));
+    foreach ($want as $w) if (!in_array($w, $allowed, true)) error_response('You can only share with the other companies of the group.', 422);
+
+    $cur = $pdo->prepare("SELECT target_company_id FROM group_shares WHERE kind = ? AND item_id = ?");
+    $cur->execute([$kind, $id]);
+    $have = array_map('intval', $cur->fetchAll(PDO::FETCH_COLUMN));
+    foreach (array_diff($have, $want) as $gone) {
+        $pdo->prepare("DELETE FROM group_shares WHERE kind = ? AND item_id = ? AND target_company_id = ?")->execute([$kind, $id, $gone]);
+        // a department taken away from a company: that company's people are no longer in it
+        if ($kind === 'department') $pdo->prepare("UPDATE employees SET department_id = NULL WHERE department_id = ? AND company_id = ?")->execute([$id, $gone]);
+    }
+    foreach (array_diff($want, $have) as $new) {
+        $pdo->prepare("INSERT INTO group_shares (group_id, kind, item_id, source_company_id, target_company_id, created_by) VALUES (?,?,?,?,?,?)")
+            ->execute([$gid, $kind, $id, cid(), $new, (int)me()['id']]);
+    }
+    audit($pdo, 'share', $kind, $id, ['company_ids' => $want]);
+    $_GET['kind'] = $kind;
+    $_GET['id'] = $id;
+    group_shares_get($pdo);
 }
 
 /** The platform owner or the super admin of the caller's group passes. Uses the real account, never the company currently entered. */
@@ -257,6 +340,40 @@ function group_people(PDO $pdo, int $gid): void {
     );
     $s->execute([$gid]);
     json_response(['success' => true, 'data' => $s->fetchAll()]);
+}
+
+/** Owner: every HR admin / HR manager of the group (active or closed), where they work and how far their access reaches. */
+function group_hr_accounts(PDO $pdo, int $gid): void {
+    $s = $pdo->prepare(
+        "SELECT u.id, u.name, u.email, u.role, u.title, u.phone, u.status, u.last_login_at, u.created_at,
+                u.company_id, c.name AS company_name,
+                (SELECT COUNT(*) FROM group_admins ga WHERE ga.user_id = u.id AND ga.group_id = c.group_id) AS is_super_admin,
+                (SELECT COUNT(*) FROM platform_owners po WHERE po.user_id = u.id) AS is_owner,
+                (SELECT COUNT(*) FROM company_access a WHERE a.user_id = u.id) AS extra_companies
+         FROM users u JOIN companies c ON c.id = u.company_id
+         WHERE c.group_id = ? AND u.role IN ('hr_admin','hr_manager')
+         ORDER BY is_owner DESC, is_super_admin DESC, c.name, u.name"
+    );
+    $s->execute([$gid]);
+    $rows = $s->fetchAll();
+    foreach ($rows as &$r) { $r['is_super_admin'] = (int)$r['is_super_admin'] > 0; $r['is_owner'] = (int)$r['is_owner'] > 0; $r['extra_companies'] = (int)$r['extra_companies']; }
+    json_response(['success' => true, 'data' => $rows]);
+}
+
+/** Owner: close ({status: disabled}) or reopen ({status: active}) one HR account. A closed account is signed out at once and cannot sign in. */
+function group_hr_account_set(int $id, array $body, PDO $pdo, int $gid): void {
+    $status = (string)($body['status'] ?? '');
+    if (!in_array($status, ['active', 'disabled'], true)) error_response("status must be 'active' or 'disabled'", 422);
+    if ($id === (int)me()['id']) error_response('You cannot close your own account.', 422);
+    if (group_is_owner($pdo, $id)) error_response('The owner account cannot be closed here.', 422);
+    $u = $pdo->prepare("SELECT u.id, u.name, u.company_id FROM users u JOIN companies c ON c.id = u.company_id WHERE u.id = ? AND c.group_id = ? AND u.role IN ('hr_admin','hr_manager')");
+    $u->execute([$id, $gid]);
+    $user = $u->fetch();
+    if (!$user) error_response('HR account not found in this group.', 404);
+    $pdo->prepare("UPDATE users SET status = ? WHERE id = ?")->execute([$status, $id]);
+    if ($status !== 'active') $pdo->prepare("DELETE FROM sessions WHERE user_id = ?")->execute([$id]);
+    audit($pdo, $status === 'active' ? 'reopen_hr_account' : 'close_hr_account', 'user', $id, ['name' => $user['name']]);
+    json_response(['success' => true, 'data' => ['id' => $id, 'status' => $status]]);
 }
 
 function group_access_list(PDO $pdo, int $gid): void {

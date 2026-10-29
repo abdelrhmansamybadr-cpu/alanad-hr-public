@@ -10,6 +10,8 @@ String routeForNotification({required String type, Map? data, required bool hr})
   final complaintId = int.tryParse('${d['complaintId'] ?? d['complaint_id'] ?? ''}');
   if (type == 'complaint') return complaintId != null ? '/complaint/$complaintId' : '/complaints';
   if (type == 'chain_head_approved') return hr ? '/approvals' : '/e/requests';
+  if (hr && (type == 'contract_expiry' || type == 'contract_renewed')) return '/h/contracts';
+  if (hr && (type == 'exit_open' || type == 'account_closed')) return '/h/certificates';
   if (type == 'field') return '/field';
   if (type == 'leave_request' || type == 'request') return '/approvals';
   if (type.startsWith('leave') || type.startsWith('request')) return hr ? '/approvals' : '/e/requests';

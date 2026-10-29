@@ -41,7 +41,11 @@ function attendance_rules_validate(array $body): void {
         $r = isset($body['location_radius_km']) ? (float)$body['location_radius_km'] : 0.2;
         if ($r < 0.01 || $r > 50) error_response('Radius must be between 10 m and 50 km', 422);
     }
-    if (!empty($body['wifi_enabled']) && trim((string)($body['wifi_ssid'] ?? '')) === '' && trim((string)($body['wifi_bssid'] ?? '')) === '') {
+    if (isset($body['network_type']) && !in_array($body['network_type'], ['wifi', 'wired'], true)) error_response('network_type must be wifi or wired', 422);
+    if (!empty($body['wifi_enabled']) && ($body['network_type'] ?? 'wifi') === 'wired') {
+        // a wired (cable) network is recognised by its gateway (router) address
+        if (!filter_var(trim((string)($body['wired_gateway'] ?? '')), FILTER_VALIDATE_IP)) error_response('Connect to the wired network first so its gateway address can be read', 422);
+    } elseif (!empty($body['wifi_enabled']) && trim((string)($body['wifi_ssid'] ?? '')) === '' && trim((string)($body['wifi_bssid'] ?? '')) === '') {
         error_response('Enter the Wi-Fi name', 422);
     }
     if (isset($body['match_mode']) && !in_array($body['match_mode'], ['any', 'all'], true)) error_response('match_mode must be any or all', 422);
@@ -85,8 +89,8 @@ function attendance_rules_create(array $body, PDO $pdo): void {
     $stmt = $pdo->prepare(
         "INSERT INTO attendance_rules
             (company_id, name, is_active, location_enabled, location_lat, location_lng,
-             location_radius_km, wifi_enabled, wifi_ssid, wifi_bssid, match_mode, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
+             location_radius_km, wifi_enabled, wifi_ssid, wifi_bssid, match_mode, network_type, wired_gateway, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
     );
     $stmt->execute([
         cid(),
@@ -100,6 +104,8 @@ function attendance_rules_create(array $body, PDO $pdo): void {
         ($body['wifi_ssid'] ?? '') !== '' ? trim((string)$body['wifi_ssid']) : null,
         ($body['wifi_bssid'] ?? '') !== '' ? strtolower(trim((string)$body['wifi_bssid'])) : null,
         ($body['match_mode'] ?? 'any') === 'all' ? 'all' : 'any',
+        ($body['network_type'] ?? 'wifi') === 'wired' ? 'wired' : 'wifi',
+        ($body['network_type'] ?? 'wifi') === 'wired' && ($body['wired_gateway'] ?? '') !== '' ? trim((string)$body['wired_gateway']) : null,
     ]);
 
     $newId = (int)$pdo->lastInsertId();
@@ -116,7 +122,7 @@ function attendance_rules_update(int $id, array $body, PDO $pdo): void {
     $fields = [];
     $params = [];
     foreach (['name', 'location_enabled', 'location_lat', 'location_lng',
-              'location_radius_km', 'wifi_enabled', 'wifi_ssid', 'wifi_bssid', 'match_mode', 'is_active'] as $field) {
+              'location_radius_km', 'wifi_enabled', 'wifi_ssid', 'wifi_bssid', 'match_mode', 'is_active', 'network_type', 'wired_gateway'] as $field) {
         if (array_key_exists($field, $body)) {
             $fields[] = "$field = ?";
             $params[]  = in_array($field, ['is_active', 'location_enabled', 'wifi_enabled'], true)

@@ -1,9 +1,16 @@
 import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../core/config.dart';
+import '../../core/desktop/desktop_service.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/api/api.dart';
@@ -13,6 +20,9 @@ import '../../core/push/notification_route.dart';
 import '../../core/push/push_service.dart';
 import '../../core/session/session.dart';
 import 'meeting_session.dart';
+
+const _ringChannel = MethodChannel('alanad/ring');
+final bool _androidRing = !kIsWeb && Platform.isAndroid;
 
 class _Ring {
   final int id;
@@ -45,6 +55,11 @@ class _AppEventsHostState extends ConsumerState<AppEventsHost> {
   void initState() {
     super.initState();
     _poll = Timer.periodic(const Duration(seconds: 4), (_) => _check());
+    if (DesktopService.on) {
+      DesktopService.onBalloonClick = _onBalloonClick;
+      DesktopService.onPopupAction = _onPopupAction;
+      _notifPoll = Timer.periodic(const Duration(seconds: 15), (_) => _checkLaptopNotifications());
+    }
     PushService.onTap = _onNotificationTap;
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
   }
@@ -52,7 +67,14 @@ class _AppEventsHostState extends ConsumerState<AppEventsHost> {
   @override
   void dispose() {
     _poll?.cancel();
+    _notifPoll?.cancel();
     _beep?.cancel();
+    if (DesktopService.on) {
+      DesktopService.stopRing();
+      DesktopService.hidePopup();
+      DesktopService.onBalloonClick = null;
+      DesktopService.onPopupAction = null;
+    }
     if (PushService.onTap == _onNotificationTap) PushService.onTap = null;
     super.dispose();
   }
@@ -77,8 +99,10 @@ class _AppEventsHostState extends ConsumerState<AppEventsHost> {
     final s = ref.read(sessionProvider);
     if (!s.isSignedIn) {
       _stopRing();
+      _syncWatcher(null);
       return;
     }
+    _syncWatcher(ref.read(apiProvider).token);
     if (!_launchChecked) {
       _launchChecked = true;
       final tap = await PushService.takeLaunchTap();
@@ -106,19 +130,112 @@ class _AppEventsHostState extends ConsumerState<AppEventsHost> {
     }
   }
 
+  String? _watchedToken;
+
+  /// Android: a small background service keeps watching for meeting calls when the app is closed, so the phone still rings.
+  /// It gets the current sign-in here and forgets it on sign-out.
+  Future<void> _syncWatcher(String? token) async {
+    if (DesktopService.on && token != _watchedToken) {
+      // Laptop: start with Windows (hidden in the tray) so meetings can ring after a restart; forget notifications on sign-out.
+      _watchedToken = token;
+      if (token == null) {
+        DesktopService.forget();
+        DesktopService.stopRing();
+      } else {
+        DesktopService.setAutoStart(true);
+      }
+      return;
+    }
+    if (!_androidRing || token == _watchedToken) return;
+    _watchedToken = token;
+    try {
+      if (token == null) {
+        await _ringChannel.invokeMethod('unwatch');
+        return;
+      }
+      await _ringChannel.invokeMethod('watch', {'base': AppConfig.baseUrl, 'token': token, 'appId': AppConfig.appId});
+      // once: ask Android not to put the app to sleep, otherwise some phones stop the watcher
+      final sp = await SharedPreferences.getInstance();
+      if (sp.getBool('battery_asked_v1') != true) {
+        await sp.setBool('battery_asked_v1', true);
+        await _ringChannel.invokeMethod('batteryExempt');
+      }
+    } catch (_) {
+      _watchedToken = null; // try again at the next check
+    }
+  }
+
   void _startRing(_Ring r) {
     _beep?.cancel();
     setState(() => _ring = r);
     void tone() {
-      SystemSound.play(SystemSoundType.alert);
+      // The phone's own ringtone loops (below) and the laptop has its own looping ring; elsewhere the system alert sound is used.
+      if (!_androidRing && !DesktopService.on) SystemSound.play(SystemSoundType.alert);
       HapticFeedback.heavyImpact();
     }
 
+    if (_androidRing) _ringChannel.invokeMethod('start').catchError((_) => false);
+    if (DesktopService.on) _ringOnLaptop(r);
     tone();
     _beep = Timer.periodic(const Duration(milliseconds: 1600), (_) => tone());
   }
 
+  /// Laptop: looping ring, and the window comes up in front (even from the tray) with a pop-up notification.
+  Future<void> _ringOnLaptop(_Ring r) async {
+    final focused = await DesktopService.isFocused();
+    if (!mounted) return;
+    // The app is closed to the tray, minimized or behind other windows: a card pops up in the top corner of the screen
+    // (top-right, or top-left in Arabic) with Join / Decline. When the app is in front, its own ring screen is enough.
+    if (!focused) {
+      DesktopService.showPopup(
+        header: context.t('meet.incoming'),
+        title: r.title,
+        sub: r.host.isEmpty ? '' : '${context.t('meet.host')}: ${r.host}',
+        join: context.t('meet.join'),
+        decline: context.t('meet.decline'),
+        rtl: Directionality.of(context) == TextDirection.rtl,
+      );
+    }
+    await DesktopService.startRing();
+  }
+
+  void _onPopupAction(String action) {
+    if (_ring == null) return;
+    if (action == 'decline') {
+      _decline();
+    } else {
+      DesktopService.show();
+      if (action == 'join') _join();
+    }
+  }
+
+  // ----------------------------------------------------------------- laptop: new notifications while minimized / in the tray
+
+  Timer? _notifPoll;
+  Map<String, dynamic>? _lastBalloon;
+
+  Future<void> _checkLaptopNotifications() async {
+    if (!mounted || !ref.read(sessionProvider).isSignedIn) return;
+    try {
+      final shown = await DesktopService.checkNotifications(ref.read(apiProvider));
+      if (shown != null) _lastBalloon = shown;
+    } catch (_) {
+      // the next check comes in 15 seconds
+    }
+  }
+
+  void _onBalloonClick() {
+    final p = _lastBalloon;
+    _lastBalloon = null;
+    if (p != null) _onNotificationTap(p);
+  }
+
   void _stopRing() {
+    if (DesktopService.on && _beep != null) {
+      DesktopService.stopRing();
+      DesktopService.hidePopup();
+    }
+    if (_androidRing && _beep != null) _ringChannel.invokeMethod('stop').catchError((_) => false);
     _beep?.cancel();
     _beep = null;
     if (_ring != null && mounted) setState(() => _ring = null);

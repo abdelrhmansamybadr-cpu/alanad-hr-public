@@ -14,6 +14,8 @@ import '../../core/models/models.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
+import '../common/global_search.dart';
 import '../data/providers.dart';
 import '../rewards/rewards_widgets.dart';
 import 'attendance_actions.dart';
@@ -55,11 +57,17 @@ class EmployeeHome extends ConsumerWidget {
                   ]),
                 ),
                 _CompanyChip(company: company),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
+                const SearchIconButton(),
                 NotificationBell(count: unread, onTap: () => context.go('/e/inbox')),
               ]),
               const SizedBox(height: 18),
 
+              // Laptop: the attendance card and your cards on the left, quick actions and numbers on the right.
+              SplitColumns(
+                leftFlex: 5,
+                rightFlex: 4,
+                left: [
               // ---- attendance hero
               today.when(
                 data: (t) => AttendanceHero(info: t),
@@ -109,7 +117,8 @@ class EmployeeHome extends ConsumerWidget {
                     : const SizedBox.shrink(),
                 orElse: () => const SizedBox.shrink(),
               ),
-
+                ],
+                right: [
               // ---- quick actions
               const _QuickActions(),
 
@@ -118,6 +127,8 @@ class EmployeeHome extends ConsumerWidget {
                 data: (s) => _StatsSections(stats: s),
                 loading: () => const Padding(padding: EdgeInsets.only(top: 24), child: Column(children: [Skeleton(height: 110, radius: 20), SizedBox(height: 14), Skeleton(height: 90, radius: 20)])),
                 error: (e, _) => Padding(padding: const EdgeInsets.only(top: 24), child: ErrorState(e, onRetry: () => ref.invalidate(myStatsProvider))),
+              ),
+                ],
               ),
             ],
           ),
@@ -314,7 +325,7 @@ class _AttendanceHeroState extends ConsumerState<AttendanceHero> {
                 info.locationRequired && info.wifiRequired
                     ? context.t(info.matchMode == 'all' ? 'time.rule_both_all' : 'time.rule_both_any', {'ssid': info.wifiSsid ?? ''})
                     : info.wifiRequired
-                        ? context.t('time.rule_wifi', {'ssid': info.wifiSsid ?? ''})
+                        ? (info.wifiNetworkType == 'wired' ? context.t('time.rule_wired') : context.t('time.rule_wifi', {'ssid': info.wifiSsid ?? ''}))
                         : context.t('time.rule_location'),
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12, height: 1.35),
               ),

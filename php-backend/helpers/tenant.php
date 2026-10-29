@@ -83,6 +83,7 @@ function hr_module_for_route(string $root): ?string {
         'recruitment' => 'recruitment', 'talent-pool' => 'talent_pool', 'reviews' => 'reviews',
         'announcements' => 'announcements', 'documents' => 'documents', 'hr-staff' => 'hr_staff',
         'requests' => 'requests', 'stats' => 'dashboard',
+        'certificates' => 'documents', 'contracts' => 'employees',
     ];
     return $map[$root] ?? null;
 }

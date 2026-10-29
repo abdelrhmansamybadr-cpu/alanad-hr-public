@@ -299,7 +299,30 @@ function att_distance_m(float $lat1, float $lng1, float $lat2, float $lng2): flo
     return 2 * $r * asin(min(1, sqrt($a)));
 }
 
-function att_active_rules(PDO $pdo): array {
+/**
+ * The day from which this employee's attendance is counted: the day the account was created, i.e. the first time the person
+ * installed the app / opened the site and chose a password. null = never signed in yet, so nothing is counted (no absences, no deductions).
+ */
+function att_tracking_start(PDO $pdo, int $employeeId): ?string {
+    static $cache = [];
+    $k = cid() . ':' . $employeeId;
+    if (!array_key_exists($k, $cache)) {
+        $s = $pdo->prepare("SELECT MIN(created_at) FROM users WHERE employee_id = ? AND company_id = ? AND role = 'employee'");
+        $s->execute([$employeeId, cid()]);
+        $v = $s->fetchColumn();
+        $cache[$k] = $v ? substr((string)$v, 0, 10) : null;
+    }
+    return $cache[$k];
+}
+
+function att_active_rules(PDO $pdo, ?array $emp = null): array {
+    $mode = (string)($emp['attendance_mode'] ?? 'company');
+    if ($mode === 'free') return [];                                   // exception: this person is not tied to a place
+    if ($mode === 'rule' && !empty($emp['attendance_rule_id'])) {      // exception: a different place / method just for this person
+        $s = $pdo->prepare("SELECT * FROM attendance_rules WHERE id = ? AND company_id = ?");
+        $s->execute([(int)$emp['attendance_rule_id'], cid()]);
+        return array_values(array_filter($s->fetchAll(), fn($r) => (int)$r['location_enabled'] === 1 || (int)$r['wifi_enabled'] === 1));
+    }
     $s = $pdo->prepare("SELECT * FROM attendance_rules WHERE company_id = ? AND is_active = 1 ORDER BY id");
     $s->execute([cid()]);
     return array_values(array_filter($s->fetchAll(), fn($r) => (int)$r['location_enabled'] === 1 || (int)$r['wifi_enabled'] === 1));
@@ -314,8 +337,8 @@ function att_ssid_clean($s): string {
  * Is the device inside an allowed zone?  Returns
  * ['constrained'=>bool,'inside'=>bool,'message'=>string,'distance_m'=>?float,'rule'=>?string,'via'=>?string]
  */
-function att_zone(PDO $pdo, array $body): array {
-    $rules = att_active_rules($pdo);
+function att_zone(PDO $pdo, array $body, ?array $emp = null): array {
+    $rules = att_active_rules($pdo, $emp);
     if (!$rules) return ['constrained' => false, 'inside' => true, 'message' => '', 'distance_m' => null, 'rule' => null, 'via' => null];
 
     $hasLoc = isset($body['lat'], $body['lng']) && is_numeric($body['lat']) && is_numeric($body['lng']);
@@ -325,7 +348,8 @@ function att_zone(PDO $pdo, array $body): array {
 
     foreach ($rules as $r) {
         $locOn = (int)$r['location_enabled'] === 1 && $r['location_lat'] !== null && $r['location_lng'] !== null;
-        $wifiOn = (int)$r['wifi_enabled'] === 1 && ($r['wifi_ssid'] !== null && $r['wifi_ssid'] !== '' || !empty($r['wifi_bssid']));
+        $wired  = ($r['network_type'] ?? 'wifi') === 'wired';
+        $wifiOn = (int)$r['wifi_enabled'] === 1 && ($wired ? !empty($r['wired_gateway']) : ($r['wifi_ssid'] !== null && $r['wifi_ssid'] !== '' || !empty($r['wifi_bssid'])));
         $locOk = null; $wifiOk = null; $dist = null;
 
         if ($locOn) {
@@ -340,7 +364,12 @@ function att_zone(PDO $pdo, array $body): array {
                 $messages[] = 'Location is required. Please turn on location services and try again.';
             }
         }
-        if ($wifiOn) {
+        if ($wifiOn && $wired) {
+            // wired (cable) network: the device must be on a cable connection whose gateway is the company's
+            $gw = trim((string)($body['gateway'] ?? ''));
+            $wifiOk = ($body['link'] ?? '') === 'wired' && $gw !== '' && $gw === trim((string)$r['wired_gateway']);
+            if (!$wifiOk) $messages[] = 'Connect this device to the company wired (cable) network to continue.';
+        } elseif ($wifiOn) {
             if (!empty($r['wifi_bssid'])) $wifiOk = $bssid !== '' && strcasecmp($bssid, $r['wifi_bssid']) === 0;
             else                          $wifiOk = $ssid !== '' && strcasecmp($ssid, $r['wifi_ssid']) === 0;
             if (!$wifiOk) {

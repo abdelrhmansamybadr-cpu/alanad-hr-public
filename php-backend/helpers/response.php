@@ -39,6 +39,7 @@ function hr_camelize_keys($value) {
         if ($v === null && in_array($k, ['location', 'description', 'content', 'authorName', 'employeeName', 'jobTitle', 'color', 'period'], true)) {
             $v = '';
         }
+        if ($k === 'email' && is_string($v) && str_ends_with(strtolower($v), '@no-email.invalid')) $v = '';
         $out[$k] = $v;
     }
     return $out;

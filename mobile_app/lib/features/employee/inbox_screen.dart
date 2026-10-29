@@ -9,6 +9,7 @@ import '../../core/models/models.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../../core/push/notification_route.dart';
 import '../data/providers.dart';
 
@@ -96,11 +97,11 @@ class InboxScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(notificationsProvider),
           builder: (d) => d.items.isEmpty
               ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.notifications_off_outlined, title: context.t('inbox.empty'), subtitle: context.t('inbox.empty_hint')))])
-              : ListView.separated(
+              : AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: d.items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) {
                     final n = d.items[i];
                     final color = notificationColor(context, n.type);

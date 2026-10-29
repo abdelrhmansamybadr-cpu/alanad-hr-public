@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../data/providers.dart';
 
 class StarRating extends StatelessWidget {
@@ -65,11 +66,11 @@ class MyReviewsScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(reviewsProvider),
           builder: (items) => items.isEmpty
               ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.star_outline_rounded, title: context.t('rev.empty'), subtitle: context.t('rev.empty_hint')))])
-              : ListView.separated(
+              : AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) => RowTile(
                     leading: IconBadge(Icons.star_rounded, color: context.colors.warning, size: 46),
                     title: items[i].period.isEmpty ? context.t('me.reviews') : items[i].period,

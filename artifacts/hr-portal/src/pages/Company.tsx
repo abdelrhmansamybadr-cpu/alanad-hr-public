@@ -207,6 +207,8 @@ interface Rule {
   wifiEnabled: boolean;
   wifiSsid: string | null;
   wifiBssid?: string | null;
+  networkType?: string;
+  wiredGateway?: string | null;
   matchMode?: string;
 }
 
@@ -221,6 +223,7 @@ function Rules() {
 
   async function save() {
     if (!draft?.name?.trim()) return bad(tr("Name is required", "الاسم مطلوب"));
+    const wired = !!draft.wifiEnabled && draft.networkType === "wired";
     const body = {
       name: draft.name.trim(),
       isActive: draft.isActive ?? true,
@@ -229,8 +232,10 @@ function Rules() {
       locationLng: draft.locationEnabled ? Number(draft.locationLng) : null,
       locationRadiusKm: draft.locationEnabled ? (Number(draft.locationRadiusKm) || 0.2) : null,
       wifiEnabled: !!draft.wifiEnabled,
-      wifiSsid: draft.wifiEnabled ? draft.wifiSsid ?? "" : null,
-      wifiBssid: draft.wifiEnabled ? draft.wifiBssid ?? "" : null,
+      wifiSsid: draft.wifiEnabled ? (wired ? tr("Wired network", "شبكة سلكية") : draft.wifiSsid ?? "") : null,
+      wifiBssid: draft.wifiEnabled && !wired ? draft.wifiBssid ?? "" : null,
+      networkType: wired ? "wired" : "wifi",
+      wiredGateway: wired ? (draft.wiredGateway ?? "").trim() : null,
       matchMode: draft.matchMode === "all" ? "all" : "any",
     };
     if (body.locationEnabled && (!isFinite(body.locationLat as number) || !isFinite(body.locationLng as number))) {
@@ -265,7 +270,7 @@ function Rules() {
             <div>
               <div className="font-medium">{r.name}</div>
               <div className="text-xs text-muted-foreground">
-                {[r.locationEnabled && `${Math.round((r.locationRadiusKm ?? 0) * 1000)} m`, r.wifiEnabled && `Wi-Fi ${r.wifiSsid}${r.wifiBssid ? " (" + r.wifiBssid + ")" : ""}`, r.locationEnabled && r.wifiEnabled && (r.matchMode === "all" ? tr("both required", "الاثنان معاً") : tr("either one", "أحدهما")), !r.locationEnabled && !r.wifiEnabled && tr("Anywhere", "أي مكان")].filter(Boolean).join(" · ")}
+                {[r.locationEnabled && `${Math.round((r.locationRadiusKm ?? 0) * 1000)} m`, r.wifiEnabled && (r.networkType === "wired" ? `${tr("Wired network", "شبكة سلكية")} (${r.wiredGateway})` : `Wi-Fi ${r.wifiSsid}${r.wifiBssid ? " (" + r.wifiBssid + ")" : ""}`), r.locationEnabled && r.wifiEnabled && (r.matchMode === "all" ? tr("both required", "الاثنان معاً") : tr("either one", "أحدهما")), !r.locationEnabled && !r.wifiEnabled && tr("Anywhere", "أي مكان")].filter(Boolean).join(" · ")}
               </div>
             </div>
           </div>
@@ -305,9 +310,20 @@ function Rules() {
           )}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.wifiEnabled} onChange={(e) => setDraft({ ...draft, wifiEnabled: e.target.checked })} />{tr("Require office Wi-Fi", "اشتراط شبكة واي فاي المكتب")}</label>
           {draft.wifiEnabled && (
-            <div className="grid sm:grid-cols-2 gap-3">
-              <input className={input} placeholder={tr("Wi-Fi name (SSID)", "اسم الواي فاي (SSID)")} value={draft.wifiSsid ?? ""} onChange={(e) => setDraft({ ...draft, wifiSsid: e.target.value })} />
-              <input className={input} placeholder={tr("Router ID / BSSID (optional, stricter)", "معرّف الراوتر / BSSID (اختياري، أشد)")} value={draft.wifiBssid ?? ""} onChange={(e) => setDraft({ ...draft, wifiBssid: e.target.value })} />
+            <div className="space-y-3">
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-2"><input type="radio" name="nettype" checked={draft.networkType !== "wired"} onChange={() => setDraft({ ...draft, networkType: "wifi" })} />{tr("Wi-Fi", "واي فاي")}</label>
+                <label className="flex items-center gap-2"><input type="radio" name="nettype" checked={draft.networkType === "wired"} onChange={() => setDraft({ ...draft, networkType: "wired" })} />{tr("Wired network (cable)", "شبكة سلكية (كابل)")}</label>
+              </div>
+              {draft.networkType === "wired" ? (
+                <input className={input} dir="ltr" placeholder={tr("Office router (gateway) address, e.g. 192.168.1.1", "عنوان راوتر المكتب (البوابة) مثل 192.168.1.1")} value={draft.wiredGateway ?? ""} onChange={(e) => setDraft({ ...draft, wiredGateway: e.target.value })} />
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <input className={input} placeholder={tr("Wi-Fi name (SSID)", "اسم الواي فاي (SSID)")} value={draft.wifiSsid ?? ""} onChange={(e) => setDraft({ ...draft, wifiSsid: e.target.value })} />
+                  <input className={input} placeholder={tr("Router ID / BSSID (optional, stricter)", "معرّف الراوتر / BSSID (اختياري، أشد)")} value={draft.wifiBssid ?? ""} onChange={(e) => setDraft({ ...draft, wifiBssid: e.target.value })} />
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">{tr("A website cannot see the Wi-Fi networks around the computer. To choose the network from the real list (or detect the wired network automatically), edit this rule in the phone or laptop app.", "المتصفح لا يستطيع رؤية شبكات الواي فاي حول الجهاز. لاختيار الشبكة من القائمة الحقيقية (أو التقاط الشبكة السلكية تلقائياً) عدّل هذه القاعدة من تطبيق الهاتف أو اللابتوب.")}</p>
             </div>
           )}
           {draft.locationEnabled && draft.wifiEnabled && (

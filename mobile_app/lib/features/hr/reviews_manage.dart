@@ -6,6 +6,7 @@ import '../../core/api/api.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../common/reviews_screen.dart';
 import '../data/providers.dart';
 
@@ -28,11 +29,11 @@ class ReviewsManageScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(reviewsProvider),
           builder: (items) => items.isEmpty
               ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.star_outline_rounded, title: context.t('rev.none'), subtitle: context.t('rev.none_hint')))])
-              : ListView.separated(
+              : AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) {
                     final r = items[i];
                     return RowTile(

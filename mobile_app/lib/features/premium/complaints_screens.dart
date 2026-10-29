@@ -8,6 +8,7 @@ import '../../core/i18n/strings.dart';
 import '../../core/models/json.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import 'premium_common.dart';
 
 /// scope 'mine' = the complaints I filed (head) or all of the company (HR); 'owner' = the ones sent up to the owner.
@@ -87,11 +88,11 @@ class _ComplaintsScreenState extends ConsumerState<ComplaintsScreen> {
                 if (items.isEmpty) {
                   return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [SizedBox(height: 380, child: EmptyState(icon: Icons.report_gmailerrorred_rounded, title: context.t('cmp.empty'), subtitle: context.t(canFile ? 'cmp.empty_hint' : 'cmp.empty_hint_hr')))]);
                 }
-                return ListView.separated(
+                return AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) => _ComplaintTile(items[i], showCompany: widget.ownerView),
                 );
               },

@@ -42,6 +42,8 @@ class HrMoreScreen extends ConsumerWidget {
 
     final people = <Widget>[
       item('org', Icons.hub_rounded, const Color(0xFF14B8A6), context.t('more.org'), '/org'),
+      if (can('employees')) item('contracts', Icons.description_rounded, const Color(0xFF0EA5E9), context.t('ctr.title'), '/h/contracts'),
+      if (can('documents')) item('certificates', Icons.workspace_premium_rounded, const Color(0xFFB8975A), context.t('cert.title'), '/h/certificates'),
       if (can('departments')) item('departments', Icons.account_tree_rounded, const Color(0xFF6366F1), context.t('module.departments'), '/h/departments'),
       if (can('shifts')) item('shifts', Icons.schedule_rounded, const Color(0xFF0EA5E9), context.t('module.shifts'), '/h/shifts'),
       if (can('leaves')) item('leaves', Icons.beach_access_rounded, const Color(0xFF10B981), context.t('more.leave_types'), '/h/leave-types'),
@@ -74,6 +76,7 @@ class HrMoreScreen extends ConsumerWidget {
             if (session.group!.canSwitch) MenuItem(icon: Icons.swap_horiz_rounded, color: const Color(0xFF00617A), label: context.t('group.switch_company'), onTap: () => showCompanySwitcher(context, ref)),
             if (session.group!.isSuperAdmin || session.group!.isOwner) item('group', Icons.business_rounded, const Color(0xFF00617A), context.t('group.companies'), '/h/group'),
             if (session.group!.isSuperAdmin || session.group!.isOwner) item('group-access', Icons.key_rounded, const Color(0xFFC88453), context.t('group.access'), '/h/group-access'),
+            if (session.group!.isOwner) item('hr-accounts', Icons.manage_accounts_rounded, const Color(0xFF8A5CF6), context.t('hra.title'), '/h/hr-accounts'),
           ]),
         ],
         if (smart.isNotEmpty) ...[SectionHeader(context.t('prem.section')), MenuGroup(children: smart)],

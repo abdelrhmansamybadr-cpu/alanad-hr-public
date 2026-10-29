@@ -28,7 +28,7 @@ interface Row {
 }
 interface Board { date: string; holiday?: string | null; counts: Record<string, number>; total: number; employees: Row[] }
 
-const FILTERS = ["", "present", "late", "half_day", "absent", "on_leave", "not_in", "outside"];
+const FILTERS = ["", "present", "late", "half_day", "absent", "on_leave", "not_in", "not_started", "outside"];
 
 export default function Attendance() {
   const tr = useTr();
@@ -43,7 +43,7 @@ export default function Attendance() {
 
   const statusLabel: Record<string, string> = {
     present: tr("Present", "حاضر"), late: tr("Late", "متأخر"), half_day: tr("Half day", "نصف يوم"), absent: tr("Absent", "غائب"),
-    on_leave: tr("On leave", "إجازة"), not_in: tr("Not in yet", "لم يحضر بعد"), off: tr("Day off", "يوم راحة"), holiday: tr("Holiday", "عطلة"),
+    on_leave: tr("On leave", "إجازة"), not_in: tr("Not in yet", "لم يحضر بعد"), not_started: tr("Not signed in yet (not counted)", "لم يسجّل الدخول بعد (غير محسوب)"), off: tr("Day off", "يوم راحة"), holiday: tr("Holiday", "عطلة"),
   };
   const shift = (n: number) => { const d = new Date(day + "T12:00:00"); d.setDate(d.getDate() + n); setDay(ymd(d)); };
   const rows = (board?.employees ?? []).filter((r) => (filter === "" ? true : filter === "outside" ? r.outsideNow : r.boardStatus === filter));
@@ -77,7 +77,7 @@ export default function Attendance() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
               ["present", c.present, "text-emerald-600"], ["late", c.late, "text-amber-600"], ["half_day", c.half_day, "text-orange-600"],
-              ["absent", c.absent, "text-red-600"], ["on_leave", c.on_leave, "text-blue-600"], ["not_in", c.not_in, "text-muted-foreground"],
+              ["absent", c.absent, "text-red-600"], ["on_leave", c.on_leave, "text-blue-600"], ["not_in", c.not_in, "text-muted-foreground"], ["not_started", c.not_started ?? 0, "text-muted-foreground"],
             ].map(([k, v, cls]: any) => (
               <button key={k} onClick={() => setFilter(filter === k ? "" : k)} className={`${cardCls} !p-4 text-start ${filter === k ? "ring-2 ring-primary" : ""}`}>
                 <div className={`text-3xl font-extrabold ${cls}`}>{v ?? 0}</div>

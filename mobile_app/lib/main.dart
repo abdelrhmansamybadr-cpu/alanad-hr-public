@@ -1,9 +1,11 @@
+import 'core/security/vpn_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'app/desktop_frame.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/i18n/strings.dart';
@@ -46,7 +48,7 @@ class AlAnadApp extends ConsumerWidget {
         final dark = Theme.of(context).brightness == Brightness.dark;
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(statusBarColor: Colors.transparent, systemNavigationBarColor: Theme.of(context).colorScheme.surface),
-          child: AppEventsHost(child: ObFlowWatcher(child: UpdateGate(child: child ?? const SizedBox()))),
+          child: VpnGate(child: AppEventsHost(child: ObFlowWatcher(child: UpdateGate(child: DesktopFrame(router: router, child: child ?? const SizedBox()))))),
         );
       },
     );

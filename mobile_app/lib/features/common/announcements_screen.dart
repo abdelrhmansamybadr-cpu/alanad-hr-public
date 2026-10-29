@@ -8,6 +8,7 @@ import '../../core/models/models.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../data/providers.dart';
 
 // ================================================================ announcements
@@ -33,11 +34,11 @@ class AnnouncementsScreen extends ConsumerWidget {
           onRetry: () => ref.invalidate(announcementsProvider),
           builder: (items) => items.isEmpty
               ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.campaign_outlined, title: context.t('ann.empty'), subtitle: isHr ? context.t('ann.empty_hr') : null))])
-              : ListView.separated(
+              : AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  gap: 12,
                   itemBuilder: (_, i) {
                     final a = items[i];
                     final high = a.priority == 'high';
@@ -243,10 +244,10 @@ class _HolidaysScreenState extends ConsumerState<HolidaysScreen> {
             onRetry: () => ref.invalidate(holidaysProvider(_year)),
             builder: (items) => items.isEmpty
                 ? EmptyState(icon: Icons.celebration_outlined, title: context.t('hol.empty'))
-                : ListView.separated(
+                : AdaptiveList(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                     itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    gap: 10,
                     itemBuilder: (_, i) {
                       final h = items[i];
                       final past = h.date.isBefore(DateTime.now().subtract(const Duration(days: 1)));

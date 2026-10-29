@@ -6,7 +6,7 @@
 ; Bump AppVersion together with `version:` in mobile_app/pubspec.yaml.
 
 #define AppName "Al Anad HR"
-#define AppVersion "1.2.0"
+#define AppVersion "1.6.13"
 #define AppExe "hr_mobile_app.exe"
 #define BuildDir "..\mobile_app\build\windows\x64\runner\Release"
 
@@ -43,5 +43,24 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
+[Registry]
+; "Start with Windows" is switched on by the app itself after sign-in; remove it again when the app is uninstalled.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "AlAnadHR"; ValueType: none; Flags: uninsdeletevalue
+
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; An in-app update runs the installer silently: start the app again afterwards.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
+
+[UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "StopAlAnad"
+
+[Code]
+// The app keeps running in the system tray when its window is closed, so an upgrade has to stop it first.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Result := '';
+end;

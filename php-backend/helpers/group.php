@@ -203,3 +203,34 @@ function company_seed_defaults(PDO $pdo, int $companyId): void {
     $pdo->prepare("INSERT INTO shifts (company_id, name, start_time, end_time, color, days) VALUES (?, 'Day shift', '09:00:00', '17:00:00', '#4F46E5', 'sun,mon,tue,wed,thu')")->execute([$companyId]);
     $pdo->prepare("INSERT INTO leave_policy (company_id, days_per_month, days_per_year) VALUES (?, 2, 21)")->execute([$companyId]);
 }
+
+// ------------------------------------------------------------------------------------------------ shared people / departments
+// A company can share one of its employees or departments with other companies of the same group (table group_shares).
+// The owner of the item stays the only one who can change it; the other company sees it and (for a department) can put its own
+// people in it. Everything else about a company stays isolated.
+
+/** Is department $id one of this company's own, or shared into it? */
+function department_visible(PDO $pdo, ?int $id): bool {
+    if (!$id) return false;
+    $s = $pdo->prepare("SELECT 1 FROM departments d WHERE d.id = ? AND (d.company_id = ? OR EXISTS
+        (SELECT 1 FROM group_shares g WHERE g.kind = 'department' AND g.item_id = d.id AND g.target_company_id = ?)) LIMIT 1");
+    $s->execute([$id, cid(), cid()]);
+    return (bool)$s->fetchColumn();
+}
+
+/** Companies this person may share things with: the group's other active companies (a company the owner keeps for himself only for the owner). */
+function group_share_targets(PDO $pdo): array {
+    $gid = group_id_of_company($pdo, cid());
+    if ($gid === null) return [];
+    $owner = group_is_owner($pdo, (int)me()['id']);
+    $s = $pdo->prepare("SELECT id, name FROM companies WHERE group_id = ? AND status = 'active' AND id != ?" . ($owner ? '' : ' AND owner_managed = 0') . " ORDER BY name");
+    $s->execute([$gid, cid()]);
+    return $s->fetchAll();
+}
+
+/** item id => how many other companies it is shared with, for this company's items of $kind. */
+function group_share_counts(PDO $pdo, string $kind): array {
+    $s = $pdo->prepare("SELECT item_id, COUNT(*) FROM group_shares WHERE kind = ? AND source_company_id = ? GROUP BY item_id");
+    $s->execute([$kind, cid()]);
+    return $s->fetchAll(PDO::FETCH_KEY_PAIR);
+}

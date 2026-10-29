@@ -10,6 +10,8 @@ import '../../core/ui/format.dart';
 import '../../core/ui/suggest_field.dart';
 import '../../core/ui/widgets.dart';
 import '../data/providers.dart';
+import '../group/share_sheet.dart';
+import '../group/transfer_sheet.dart';
 
 /// One department: its head, its members, and ways to add people.
 class DepartmentDetailScreen extends ConsumerWidget {
@@ -32,7 +34,7 @@ class DepartmentDetailScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.edit_rounded),
-            onPressed: dept.valueOrNull == null
+            onPressed: dept.valueOrNull == null || dept.valueOrNull!.shared
                 ? null
                 : () async {
                     await showDepartmentForm(context, existing: dept.valueOrNull);
@@ -66,6 +68,25 @@ class DepartmentDetailScreen extends ConsumerWidget {
               ]),
             ),
 
+            if (d.shared)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: context.colors.info.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
+                  child: Text(context.t('share.shared_banner', {'name': d.sharedFrom ?? ''}), style: TextStyle(color: context.colors.info, fontWeight: FontWeight.w600, height: 1.4)),
+                ),
+              )
+            else
+              Column(children: [
+                ShareCard(kind: 'department', id: id, name: d.name, count: d.sharedCount, onChanged: () => _refresh(ref)),
+                TransferCard(kind: 'department', id: id, name: d.name, onMoved: () {
+                  _refresh(ref);
+                  context.pop();
+                }),
+              ]),
+
             // ---- head
             SectionHeader(context.t('org.head')),
             AppCard(
@@ -74,7 +95,7 @@ class DepartmentDetailScreen extends ConsumerWidget {
                       IconBadge(Icons.star_outline_rounded, color: context.colors.warning),
                       const SizedBox(width: 14),
                       Expanded(child: Text(context.t('org.no_head'), style: TextStyle(color: context.colors.subtext))),
-                      TextButton(onPressed: () => _pickHead(context, ref, d), child: Text(context.t('org.set_head'))),
+                      if (!d.shared) TextButton(onPressed: () => _pickHead(context, ref, d), child: Text(context.t('org.set_head'))),
                     ])
                   : Row(children: [
                       Avatar(name: d.headName ?? '', url: d.headAvatar, size: 50, ring: true),
@@ -85,10 +106,10 @@ class DepartmentDetailScreen extends ConsumerWidget {
                           if ((d.headPosition ?? '').isNotEmpty) Text(d.headPosition!, style: TextStyle(color: context.colors.subtext, fontSize: 13)),
                         ]),
                       ),
-                      TextButton(onPressed: () => _pickHead(context, ref, d), child: Text(context.t('org.change_head'))),
+                      if (!d.shared) TextButton(onPressed: () => _pickHead(context, ref, d), child: Text(context.t('org.change_head'))),
                     ]),
             ),
-            Padding(padding: const EdgeInsets.fromLTRB(4, 8, 4, 0), child: Text(context.t('org.head_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12, height: 1.4))),
+            if (!d.shared) Padding(padding: const EdgeInsets.fromLTRB(4, 8, 4, 0), child: Text(context.t('org.head_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12, height: 1.4))),
 
             // ---- members
             SectionHeader(context.t('org.members')),
@@ -116,18 +137,20 @@ class DepartmentDetailScreen extends ConsumerWidget {
                   child: RowTile(
                     leading: Avatar(name: m.fullName, url: m.avatar, size: 46, ring: m.id == d.headId),
                     title: m.fullName,
-                    subtitle: m.position,
-                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (m.id == d.headId) Pill(context.t('org.head'), color: context.colors.warning, icon: Icons.star_rounded),
-                      PopupMenuButton<String>(
-                        onSelected: (v) => v == 'head' ? _setHead(context, ref, d, m.id) : _remove(context, ref, d, m),
-                        itemBuilder: (_) => [
-                          if (m.id != d.headId) PopupMenuItem(value: 'head', child: Text(context.t('org.make_head'))),
-                          PopupMenuItem(value: 'remove', child: Text(context.t('org.remove_member'), style: TextStyle(color: context.colors.danger))),
-                        ],
-                      ),
-                    ]),
-                    onTap: () => context.push('/h/employee/${m.id}'),
+                    subtitle: m.shared ? [m.position, if (m.companyName != null) m.companyName!].where((s) => s.isNotEmpty).join(' · ') : m.position,
+                    trailing: m.shared
+                        ? Pill(context.t('share.from', {'name': m.companyName ?? ''}), color: context.colors.info, icon: Icons.share_rounded)
+                        : Row(mainAxisSize: MainAxisSize.min, children: [
+                            if (m.id == d.headId) Pill(context.t('org.head'), color: context.colors.warning, icon: Icons.star_rounded),
+                            PopupMenuButton<String>(
+                              onSelected: (v) => v == 'head' ? _setHead(context, ref, d, m.id) : _remove(context, ref, d, m),
+                              itemBuilder: (_) => [
+                                if (m.id != d.headId && !d.shared) PopupMenuItem(value: 'head', child: Text(context.t('org.make_head'))),
+                                PopupMenuItem(value: 'remove', child: Text(context.t('org.remove_member'), style: TextStyle(color: context.colors.danger))),
+                              ],
+                            ),
+                          ]),
+                    onTap: m.shared ? null : () => context.push('/h/employee/${m.id}'),
                   ),
                 ),
           ]),
@@ -191,7 +214,8 @@ class _EmployeePickerState extends ConsumerState<_EmployeePicker> {
 
   @override
   Widget build(BuildContext context) {
-    final all = ref.watch(employeesProvider(''));
+    // choosing a head: own people and people shared by other companies; adding members: own people only
+    final all = widget.single ? ref.watch(peopleListProvider('')) : ref.watch(employeesProvider(''));
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.62,
       child: Column(children: [
@@ -215,7 +239,7 @@ class _EmployeePickerState extends ConsumerState<_EmployeePicker> {
                     contentPadding: EdgeInsets.zero,
                     leading: Avatar(name: e.fullName, url: e.avatar, size: 42),
                     title: Text(e.fullName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Text([e.position, if (e.departmentName != null) e.departmentName!].where((s) => s.isNotEmpty).join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text([e.position, if (e.departmentName != null) e.departmentName!, if (e.sharedFrom != null) e.sharedFrom!].where((s) => s.isNotEmpty).join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: widget.single ? null : Checkbox(value: on, onChanged: (_) => setState(() => on ? _selected.remove(e.id) : _selected.add(e.id))),
                     onTap: () {
                       if (widget.single) {
@@ -288,7 +312,7 @@ class _DepartmentFormState extends ConsumerState<_DepartmentForm> {
 
   @override
   Widget build(BuildContext context) {
-    final people = (ref.watch(employeesProvider('')).valueOrNull ?? const <Employee>[]).where((e) => e.status != 'inactive').toList();
+    final people = (ref.watch(peopleListProvider('')).valueOrNull ?? const <Employee>[]).where((e) => e.status != 'inactive').toList();
     return Form(
       key: _form,
       child: Column(children: [

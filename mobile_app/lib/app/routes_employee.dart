@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/i18n/strings.dart';
+import '../core/ui/responsive.dart';
 import 'floating_nav.dart';
 import '../features/data/providers.dart';
 import '../features/employee/home_screen.dart';
@@ -16,11 +17,11 @@ import '../features/employee/time_screen.dart';
 RouteBase employeeShellRoute() => StatefulShellRoute.indexedStack(
       builder: (context, state, shell) => EmployeeShell(shell: shell),
       branches: [
-        StatefulShellBranch(routes: [GoRoute(path: '/e/home', builder: (_, __) => const EmployeeHome())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/e/time', builder: (_, __) => const TimeScreen())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/e/requests', builder: (_, __) => const RequestsScreen())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/e/inbox', builder: (_, __) => const InboxScreen())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/e/me', builder: (_, __) => const MeScreen())]),
+        StatefulShellBranch(routes: [GoRoute(path: '/e/home', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: EmployeeHome()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/e/time', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: TimeScreen()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/e/requests', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: RequestsScreen()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/e/inbox', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: InboxScreen()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/e/me', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: MeScreen()))]),
       ],
     );
 
@@ -36,7 +37,7 @@ class EmployeeShell extends ConsumerWidget {
     final unread = ref.watch(unreadCountProvider).valueOrNull ?? 0;
     return Scaffold(
       body: LocationTracker(child: shell),
-      bottomNavigationBar: FloatingNavBar(
+      bottomNavigationBar: context.isDesktop ? null : FloatingNavBar(
         index: shell.currentIndex,
         onTap: (i) => shell.goBranch(i, initialLocation: i == shell.currentIndex),
         items: [

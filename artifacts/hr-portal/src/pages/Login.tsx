@@ -224,7 +224,7 @@ export default function Login() {
               <label
                 className={`block text-sm font-medium text-foreground ${isRTL ? "text-right" : ""}`}
               >
-                {t.emailAddress}
+                {isRTL ? "البريد الإلكتروني أو رقم الجوال" : "Email or mobile number"}
               </label>
               <div className="relative">
                 <div
@@ -233,13 +233,15 @@ export default function Login() {
                   <Mail className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <input
-                  type="email"
+                  type="text"
+                  inputMode="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  autoComplete="email"
+                  autoComplete="username"
+                  dir="ltr"
                   className={`block w-full ${isRTL ? "pr-10 pl-3 text-right" : "pl-10 pr-3"} py-2.5 border border-border rounded-xl bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm transition-all`}
-                  placeholder="you@example.com"
+                  placeholder="you@example.com  /  +966 5x xxx xxxx"
                 />
               </div>
             </div>

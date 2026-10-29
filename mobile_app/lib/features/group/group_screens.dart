@@ -425,6 +425,81 @@ class _CeoFormState extends ConsumerState<_CeoForm> {
       );
 }
 
+// ================================================================ HR accounts (owner)
+
+/// Owner only: every HR admin / HR manager of the group with the switch that closes (or reopens) the account.
+class HrAccountsScreen extends ConsumerWidget {
+  const HrAccountsScreen({super.key});
+
+  Future<void> _toggle(BuildContext context, WidgetRef ref, HrAccount a) async {
+    final close = a.isActive;
+    final ok = await confirmDialog(
+      context,
+      title: context.t(close ? 'hra.close' : 'hra.reopen'),
+      message: context.t(close ? 'hra.close_hint' : 'hra.reopen_hint').replaceAll('{name}', a.name),
+      danger: close,
+      confirmLabel: context.t(close ? 'hra.close' : 'hra.reopen'),
+    );
+    if (!ok) return;
+    try {
+      await ref.read(apiProvider).put('/group/hr-accounts/${a.id}', {'status': close ? 'disabled' : 'active'});
+      ref.invalidate(hrAccountsProvider);
+      if (context.mounted) toast(context, context.t(close ? 'hra.closed' : 'hra.reopened'));
+    } on ApiException catch (e) {
+      if (context.mounted) toast(context, e.message, error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accounts = ref.watch(hrAccountsProvider);
+    return Scaffold(
+      appBar: AppBar(title: Text(context.t('hra.title'))),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(hrAccountsProvider);
+          await ref.read(hrAccountsProvider.future).catchError((_) => <HrAccount>[]);
+        },
+        child: AsyncBody<List<HrAccount>>(
+          value: accounts,
+          onRetry: () => ref.invalidate(hrAccountsProvider),
+          builder: (items) => ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: items.length + 1,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (_, i) {
+              if (i == 0) return Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(context.t('hra.hint'), style: TextStyle(color: context.colors.subtext, height: 1.4)));
+              final a = items[i - 1];
+              final role = a.isOwner ? context.t('hra.owner') : (a.isSuperAdmin ? context.t('group.super') : context.t(a.role == 'hr_admin' ? 'hra.admin' : 'hra.manager'));
+              return RowTile(
+                leading: Avatar(name: a.name, size: 44),
+                title: a.name,
+                subtitle: '${a.email}\n${a.companyName}${a.extraCompanies > 0 ? '  +${a.extraCompanies}' : ''}',
+                trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Pill(role, color: a.isOwner || a.isSuperAdmin ? context.scheme.primary : context.colors.info),
+                  const SizedBox(height: 6),
+                  Pill(context.t(a.isActive ? 'hra.active' : 'hra.closed_state'), color: a.isActive ? context.colors.success : context.colors.danger),
+                ]),
+                bottom: a.isOwner
+                    ? null
+                    : Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: () => _toggle(context, ref, a),
+                          icon: Icon(a.isActive ? Icons.lock_outline_rounded : Icons.lock_open_rounded, size: 18, color: a.isActive ? context.colors.danger : null),
+                          label: Text(context.t(a.isActive ? 'hra.close' : 'hra.reopen'), style: TextStyle(color: a.isActive ? context.colors.danger : null)),
+                        ),
+                      ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ======================================================================== access
 
 class GroupAccessScreen extends ConsumerWidget {

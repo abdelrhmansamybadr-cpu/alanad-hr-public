@@ -42,10 +42,10 @@ class StaffScreen extends ConsumerWidget {
                 title: s.name,
                 subtitle: s.email,
                 trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Pill(s.role == 'hr_admin' ? context.t('me.role_admin') : context.t('staff.manager'), color: s.role == 'hr_admin' ? context.scheme.primary : context.colors.info),
+                  if (s.isOwner) Pill(context.t('staff.owner_locked'), color: context.colors.warning, icon: Icons.lock_rounded) else Pill(s.role == 'hr_admin' ? context.t('me.role_admin') : context.t('staff.manager'), color: s.role == 'hr_admin' ? context.scheme.primary : context.colors.info),
                   if (s.status != 'active') Padding(padding: const EdgeInsets.only(top: 6), child: StatusChip(s.status)),
                 ]),
-                onTap: me.isAdmin ? () => showAppSheet(context, title: s.name, child: _StaffForm(existing: s, isSelf: s.id == me.id)) : null,
+                onTap: me.isAdmin && (!s.isOwner || s.id == me.id) ? () => showAppSheet(context, title: s.name, child: _StaffForm(existing: s, isSelf: s.id == me.id)) : null,
               );
             },
           ),

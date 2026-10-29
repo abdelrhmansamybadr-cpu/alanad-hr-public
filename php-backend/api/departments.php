@@ -47,20 +47,40 @@ function departments_select(): string {
                    CONCAT(h.first_name, ' ', h.last_name) AS manager_name,
                    COUNT(DISTINCT e.id) AS employee_count
             FROM departments d
-            LEFT JOIN employees h ON h.id = d.head_employee_id AND h.company_id = d.company_id
+            LEFT JOIN employees h ON h.id = d.head_employee_id
             LEFT JOIN employees e ON e.department_id = d.id AND e.status != 'inactive'";
 }
 
 function departments_list(PDO $pdo): void {
-    $stmt = $pdo->prepare(departments_select() . " WHERE d.company_id = ? GROUP BY d.id ORDER BY d.name");
-    $stmt->execute([cid()]);
-    json_response(['success' => true, 'data' => $stmt->fetchAll()]);
+    $stmt = $pdo->prepare(departments_select() . " WHERE (d.company_id = ? OR d.id IN (SELECT item_id FROM group_shares WHERE kind = 'department' AND target_company_id = ?)) GROUP BY d.id ORDER BY d.name");
+    $stmt->execute([cid(), cid()]);
+    $rows = $stmt->fetchAll();
+    $counts = group_share_counts($pdo, 'department');
+    $names = [];
+    foreach ($rows as &$r) {
+        if ((int)$r['company_id'] === cid()) { $r['shared_count'] = (int)($counts[$r['id']] ?? 0); continue; }
+        $r['shared'] = true;
+        $r['read_only'] = true;
+        if (!isset($names[$r['company_id']])) { $n = $pdo->prepare("SELECT name FROM companies WHERE id = ?"); $n->execute([$r['company_id']]); $names[$r['company_id']] = (string)$n->fetchColumn(); }
+        $r['shared_from'] = $names[$r['company_id']];
+    }
+    unset($r);
+    json_response(['success' => true, 'data' => $rows]);
 }
 
 function departments_fetch(int $id, PDO $pdo): ?array {
-    $stmt = $pdo->prepare(departments_select() . " WHERE d.id = ? AND d.company_id = ? GROUP BY d.id");
-    $stmt->execute([$id, cid()]);
-    return $stmt->fetch() ?: null;
+    // this company's own department, or one shared into it
+    $stmt = $pdo->prepare(departments_select() . " WHERE d.id = ? AND (d.company_id = ? OR d.id IN (SELECT item_id FROM group_shares WHERE kind = 'department' AND target_company_id = ?)) GROUP BY d.id");
+    $stmt->execute([$id, cid(), cid()]);
+    $d = $stmt->fetch() ?: null;
+    if ($d && (int)$d['company_id'] !== cid()) {
+        $n = $pdo->prepare("SELECT name FROM companies WHERE id = ?");
+        $n->execute([$d['company_id']]);
+        $d['shared'] = true;
+        $d['read_only'] = true;
+        $d['shared_from'] = (string)$n->fetchColumn();
+    }
+    return $d;
 }
 
 function departments_get_one(int $id, PDO $pdo): void {
@@ -68,11 +88,15 @@ function departments_get_one(int $id, PDO $pdo): void {
     if (!$dept) error_response('Department not found', 404);
 
     $m = $pdo->prepare(
-        "SELECT e.id, e.first_name, e.last_name, e.position, e.avatar, e.status, e.email
-         FROM employees e WHERE e.company_id = ? AND e.department_id = ? AND e.status != 'inactive' ORDER BY e.first_name, e.last_name"
+        "SELECT e.id, e.first_name, e.last_name, e.position, e.avatar, e.status, e.email, e.company_id, c.name AS company_name
+         FROM employees e JOIN companies c ON c.id = e.company_id
+         WHERE e.department_id = ? AND e.status != 'inactive' ORDER BY (e.company_id = ?) DESC, e.first_name, e.last_name"
     );
-    $m->execute([cid(), $id]);
-    $dept['members'] = $m->fetchAll();
+    $m->execute([$id, cid()]);
+    $members = $m->fetchAll();
+    foreach ($members as &$mem) { if ((int)$mem['company_id'] !== cid()) { $mem['shared'] = true; $mem['read_only'] = true; } }
+    unset($mem);
+    $dept['members'] = $members;
     json_response(['success' => true, 'data' => $dept]);
 }
 
@@ -81,7 +105,10 @@ function departments_valid_head(PDO $pdo, array $body): ?int {
     $raw = $body['head_id'] ?? $body['head_employee_id'] ?? null;
     $hid = int_or_null($raw);
     if ($hid === null) return null;
-    if (!in_company($pdo, 'employees', $hid)) error_response('The department head must be an employee of your company', 422);
+    // the head is one of this company's people, or someone another company of the group shares with it
+    $shared = $pdo->prepare("SELECT 1 FROM group_shares WHERE kind = 'employee' AND item_id = ? AND target_company_id = ? LIMIT 1");
+    $shared->execute([$hid, cid()]);
+    if (!in_company($pdo, 'employees', $hid) && !$shared->fetchColumn()) error_response('The department head must be one of your people, or someone shared with your company', 422);
     return $hid;
 }
 
@@ -118,7 +145,15 @@ function departments_update(int $id, array $body, PDO $pdo): void {
     if (array_key_exists('description', $body)) { $fields[] = 'description = ?'; $params[] = $body['description']; }
     $headTouched = array_key_exists('head_id', $body) || array_key_exists('head_employee_id', $body);
     $head = null;
-    if ($headTouched) { $head = departments_valid_head($pdo, $body); $fields[] = 'head_employee_id = ?'; $params[] = $head; }
+    if ($headTouched) {
+        // saving the form again with the same head is not a change (and must not fail for a head that is not "ours" any more)
+        $cur = $pdo->prepare("SELECT head_employee_id FROM departments WHERE id = ? AND company_id = ?");
+        $cur->execute([$id, cid()]);
+        $curHead = $cur->fetchColumn();
+        $sent = int_or_null($body['head_id'] ?? $body['head_employee_id'] ?? null);
+        if ($sent !== null && $curHead !== false && (int)$curHead === $sent) { $headTouched = false; }
+        else { $head = departments_valid_head($pdo, $body); $fields[] = 'head_employee_id = ?'; $params[] = $head; }
+    }
     if (!$fields) error_response('No fields to update');
 
     $params[] = $id; $params[] = cid();
@@ -130,7 +165,9 @@ function departments_update(int $id, array $body, PDO $pdo): void {
 
 function departments_delete(int $id, PDO $pdo): void {
     if (!in_company($pdo, 'departments', $id)) error_response('Department not found', 404);
-    $pdo->prepare("UPDATE employees SET department_id = NULL WHERE department_id = ? AND company_id = ?")->execute([$id, cid()]);
+    // people of every company that was using it (own and shared-in) are taken out; its shares go with it
+    $pdo->prepare("UPDATE employees SET department_id = NULL WHERE department_id = ?")->execute([$id]);
+    $pdo->prepare("DELETE FROM group_shares WHERE kind = 'department' AND item_id = ?")->execute([$id]);
     $pdo->prepare("DELETE FROM departments WHERE id = ? AND company_id = ?")->execute([$id, cid()]);
     audit($pdo, 'delete', 'department', $id);
     json_response(['success' => true, 'message' => 'Department deleted']);

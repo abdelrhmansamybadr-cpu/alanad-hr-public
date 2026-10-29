@@ -1,14 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../app/theme.dart';
+import '../group/share_sheet.dart';
+import '../group/transfer_sheet.dart';
 import '../../core/api/api.dart';
-import '../../core/config.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/models/json.dart';
 import '../../core/models/models.dart';
@@ -16,11 +15,15 @@ import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/suggest_field.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../common/career_org.dart';
 import '../common/directory_screen.dart';
 import '../rewards/point_orb.dart';
 import 'career_actions.dart';
 import '../data/providers.dart';
+import '../certificates/contract_widgets.dart';
+import 'invite_sheets.dart';
+import 'attendance_access.dart';
 
 final _employeeBalanceProvider = FutureProvider.autoDispose.family<List<LeaveBalance>, int>((ref, id) async {
   final m = asMap(await ref.read(apiProvider).get('/leaves/balance', query: {'employeeId': id, 'year': DateTime.now().year}));
@@ -45,7 +48,7 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
   String _q = '';
-  int _filter = 0; // 0 all, 1 active, 2 on leave, 3 inactive
+  int _filter = 0; // 0 all, 1 active, 2 on leave, 3 inactive, 4 incomplete
 
   @override
   void dispose() {
@@ -56,11 +59,11 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final list = ref.watch(employeesProvider(_q));
+    final list = ref.watch(peopleListProvider(_q));
     const statuses = ['', 'active', 'on_leave', 'inactive'];
 
     return Scaffold(
-      appBar: AppBar(title: Text(context.t('nav.people'))),
+      appBar: AppBar(title: Text(context.t('nav.people')), actions: [IconButton(tooltip: context.t('invite.all_title'), icon: const Icon(Icons.forward_to_inbox_rounded), onPressed: () => showInviteAllSheet(context, ref))]),
       floatingActionButton: FloatingActionButton.extended(onPressed: () => context.push('/h/employee/new'), icon: const Icon(Icons.person_add_alt_1_rounded), label: Text(context.t('people.add'))),
       body: Column(children: [
         Padding(
@@ -74,35 +77,37 @@ class _PeopleScreenState extends ConsumerState<PeopleScreen> {
             decoration: InputDecoration(hintText: context.t('dir.search'), prefixIcon: const Icon(Icons.search_rounded)),
           ),
         ),
-        FilterChips(labels: [context.t('common.all'), context.t('status.active'), context.t('status.on_leave'), context.t('status.inactive')], index: _filter, onChanged: (i) => setState(() => _filter = i)),
+        FilterChips(labels: [context.t('common.all'), context.t('status.active'), context.t('status.on_leave'), context.t('status.inactive'), context.t('people.incomplete')], index: _filter, onChanged: (i) => setState(() => _filter = i)),
         const SizedBox(height: 8),
         Expanded(
           child: RefreshIndicator(
             onRefresh: () async {
               ref.invalidate(employeesProvider(_q));
-              await ref.read(employeesProvider(_q).future).catchError((_) => <Employee>[]);
+              ref.invalidate(peopleListProvider(_q));
+              await ref.read(peopleListProvider(_q).future).catchError((_) => <Employee>[]);
             },
             child: AsyncBody<List<Employee>>(
               value: list,
-              onRetry: () => ref.invalidate(employeesProvider(_q)),
+              onRetry: () => ref.invalidate(peopleListProvider(_q)),
               builder: (all) {
-                final items = _filter == 0 ? all : all.where((e) => e.status == statuses[_filter]).toList();
+                final items = _filter == 0 ? all : _filter == 4 ? all.where((e) => e.incomplete).toList() : all.where((e) => e.status == statuses[_filter]).toList();
                 if (items.isEmpty) {
                   return ListView(children: [Padding(padding: const EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.people_outline_rounded, title: all.isEmpty && _q.isEmpty ? context.t('people.empty') : context.t('common.no_results'), subtitle: all.isEmpty && _q.isEmpty ? context.t('people.empty_hint') : null, actionLabel: all.isEmpty && _q.isEmpty ? context.t('people.add') : null, onAction: () => context.push('/h/employee/new')))]);
                 }
-                return ListView.separated(
+                return AdaptiveList(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  gap: 10,
                   itemBuilder: (_, i) {
                     final e = items[i];
                     return RowTile(
                       leading: Avatar(name: e.fullName, url: e.avatar, size: 48),
                       title: e.fullName,
                       subtitle: [e.position, if (e.departmentName != null) e.departmentName!].where((s) => s.isNotEmpty).join(' · '),
-                      trailing: e.status == 'active' ? null : StatusChip(e.status),
-                      onTap: () => context.push('/h/employee/${e.id}'),
+                      trailing: e.shared ? Pill(context.t('share.from', {'name': e.sharedFrom ?? ''}), color: context.colors.info, icon: Icons.share_rounded) : e.attendanceBlocked ? Pill(context.t('attx.blocked_chip'), color: context.colors.danger, icon: Icons.block_rounded) : e.incomplete ? Pill(context.t('people.incomplete'), color: context.colors.warning, icon: Icons.edit_note_rounded) : (e.status == 'active' ? null : StatusChip(e.status)),
+                      bottom: (e.contractType == null && e.iqamaExpiry == null) || e.status == 'inactive' ? null : Align(alignment: AlignmentDirectional.centerStart, child: Wrap(spacing: 6, runSpacing: 4, children: [if (e.contractType != null) ContractChip(type: e.contractType, end: e.contractEnd), IqamaChip(e.iqamaExpiry)])),
+                      onTap: () => e.shared ? showContactSheet(context, e) : context.push('/h/employee/${e.id}'),
                     );
                   },
                 );
@@ -166,7 +171,28 @@ class EmployeeDetailScreen extends ConsumerWidget {
                   _Act(Icons.email_rounded, context.t('dir.email'), context.scheme.primary, () => showContactSheet(context, e)),
                   _Act(Icons.key_rounded, context.t('people.invite'), context.colors.warning, () => showInviteSheet(context, ref, e)),
                   if (e.status != 'inactive') _Act(Icons.trending_up_rounded, context.t('promote.action'), const Color(0xFF8B5CF6), () => showPromoteSheet(context, e)),
+                  _Act(Icons.workspace_premium_rounded, context.t('cert.title'), const Color(0xFFB8975A), () => context.push('/h/certificates?employee=$id')),
                 ]),
+                if (e.incomplete && e.status != 'inactive') ...[
+                  const SizedBox(height: 14),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () async {
+                      await context.push('/h/employee/$id/edit');
+                      ref.invalidate(employeeProvider(id));
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: context.colors.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
+                      child: Row(children: [
+                        Icon(Icons.edit_note_rounded, color: context.colors.warning),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text('${context.t('people.missing_title')}: ${missingText(context, e.missing)}', style: TextStyle(color: context.colors.warning, fontWeight: FontWeight.w700, height: 1.4))),
+                      ]),
+                    ),
+                  ),
+                ],
                 if (e.status == 'inactive' && (e.terminationDate != null || e.terminationReason != null)) ...[
                   const SizedBox(height: 14),
                   Container(
@@ -178,6 +204,13 @@ class EmployeeDetailScreen extends ConsumerWidget {
                 ],
               ]),
             ),
+            ShareCard(kind: 'employee', id: id, name: e.fullName, count: e.sharedCount, onChanged: () => ref.invalidate(employeeProvider(id))),
+            if (e.status != 'inactive')
+              TransferCard(kind: 'employee', id: id, name: e.fullName, onMoved: () {
+                ref.invalidate(employeesProvider);
+                ref.invalidate(departmentsProvider);
+                context.pop();
+              }),
             SectionHeader(context.t('people.employment')),
             AppCard(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -185,9 +218,30 @@ class EmployeeDetailScreen extends ConsumerWidget {
                 InfoRow(icon: Icons.supervisor_account_rounded, label: context.t('me.manager'), value: e.managerName ?? ''),
                 InfoRow(icon: Icons.schedule_rounded, label: context.t('me.shift'), value: e.shiftName ?? ''),
                 InfoRow(icon: Icons.event_available_rounded, label: context.t('me.joined'), value: e.startDate == null ? '' : fmtDate(context, e.startDate!)),
+                InfoRow(icon: Icons.login_rounded, label: context.t('emp.first_signin'), value: e.firstSigninAt == null ? context.t('emp.not_signed_in') : fmtDate(context, e.firstSigninAt!)),
                 InfoRow(icon: Icons.payments_outlined, label: context.t('people.salary'), value: e.salary == null ? '' : money(context, e.salary!, currency)),
+                if (e.contractType != null) InfoRow(icon: Icons.description_outlined, label: context.t('ctr.section'), value: context.t('ctr.t_${e.contractType}')),
+                if (e.contractType != null && e.contractStart != null) InfoRow(icon: Icons.event_available_rounded, label: context.t('ctr.starts'), value: fmtDate(context, e.contractStart!)),
+                if (e.contractType != null && e.contractType != 'permanent' && e.contractEnd != null) InfoRow(icon: Icons.event_busy_rounded, label: context.t('ctr.ends'), value: fmtDate(context, e.contractEnd!)),
               ]),
             ),
+            if (e.contractType != null && e.status != 'inactive') Padding(padding: const EdgeInsets.fromLTRB(4, 8, 4, 0), child: Align(alignment: AlignmentDirectional.centerStart, child: ContractChip(type: e.contractType, end: e.contractEnd))),
+            if (e.nationality != null || e.idNumber != null || e.workStatus != null || e.bankIban != null || e.iqamaExpiry != null) ...[
+              SectionHeader(context.t('emp.id_section')),
+              AppCard(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Column(children: [
+                  if (e.nationality != null) InfoRow(icon: Icons.flag_outlined, label: context.t('emp.nationality'), value: e.nationality!),
+                  if (e.idNumber != null) InfoRow(icon: Icons.badge_outlined, label: context.t('emp.id_number'), value: e.idNumber!),
+                  if (e.workStatus != null) InfoRow(icon: Icons.verified_user_outlined, label: context.t('emp.work_status'), value: context.t('ws.${e.workStatus}')),
+                  if (e.bankIban != null) InfoRow(icon: Icons.account_balance_outlined, label: context.t('emp.iban'), value: e.bankIban!),
+                  if (e.iqamaExpiry != null) InfoRow(icon: Icons.event_busy_rounded, label: context.t('emp.iqama_expiry'), value: fmtDate(context, e.iqamaExpiry!)),
+                  if (e.iqamaRenewMonths != null) InfoRow(icon: Icons.autorenew_rounded, label: context.t('emp.iqama_months'), value: '${e.iqamaRenewMonths} ${context.t('common.months')}'),
+                  if (e.iqamaExpiry != null) Padding(padding: const EdgeInsetsDirectional.only(bottom: 8), child: Align(alignment: AlignmentDirectional.centerStart, child: IqamaChip(e.iqamaExpiry))),
+                  if (e.importNotes != null) InfoRow(icon: Icons.sticky_note_2_outlined, label: context.t('emp.import_notes'), value: e.importNotes!),
+                ]),
+              ),
+            ],
             if (ref.watch(sessionProvider).company?.pointsEnabled ?? true) ...[
               SectionHeader(context.t('rewards.title'), action: context.t('common.view_all'), onAction: () => context.push('/h/employee/$id/points', extra: e.fullName)),
               _PointsGlance(id: id),
@@ -367,67 +421,6 @@ class _Mini extends StatelessWidget {
       );
 }
 
-// ================================================================ invite code
-
-/// Generates a one-time code for the employee and lets HR copy / share it.
-Future<void> showInviteSheet(BuildContext context, WidgetRef ref, Employee e, {String? existingCode, bool sendEmail = false, bool? emailed}) async {
-  String? code = existingCode;
-  String purpose = 'activate';
-  if (code == null) {
-    try {
-      final m = asMap(await ref.read(apiProvider).post('/employees/${e.id}/invite', sendEmail ? {'sendEmail': true} : null));
-      code = jStr(m, 'code');
-      purpose = jStr(m, 'purpose', 'activate');
-      if (sendEmail) emailed = m['emailed'] == true;
-    } on ApiException catch (err) {
-      if (context.mounted) toast(context, err.message, error: true);
-      return;
-    }
-  }
-  if (!context.mounted) return;
-  final finalCode = code;
-  final message = context.t('invite.message', {'name': e.firstName, 'email': e.email, 'code': finalCode, 'link': '${AppConfig.baseUrl}/app/alanad/AlAnad-HR.apk'});
-  await showAppSheet(
-    context,
-    title: purpose == 'reset' ? context.t('invite.reset_title') : context.t('invite.title'),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Text(purpose == 'reset' ? context.t('invite.reset_hint', {'name': e.firstName}) : context.t('invite.hint', {'name': e.firstName}), style: TextStyle(color: context.colors.subtext, height: 1.4)),
-      if (emailed != null) ...[
-        const SizedBox(height: 10),
-        Pill(emailed ? context.t('invite.emailed', {'email': e.email}) : context.t('invite.email_failed'), color: emailed ? context.colors.success : context.colors.warning, icon: emailed ? Icons.mark_email_read_outlined : Icons.mail_outline_rounded),
-      ],
-      const SizedBox(height: 18),
-      Container(
-        padding: const EdgeInsets.symmetric(vertical: 22),
-        decoration: BoxDecoration(color: context.colors.brandSoft, borderRadius: BorderRadius.circular(20)),
-        child: Center(child: Text(finalCode.split('').join(' '), style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: 4, color: context.scheme.primary))),
-      ),
-      const SizedBox(height: 10),
-      Center(child: Text(context.t('invite.expires', {'n': purpose == 'reset' ? 1 : 7}), style: TextStyle(color: context.colors.subtext, fontSize: 12))),
-      const SizedBox(height: 18),
-      Row(children: [
-        Expanded(child: OutlinedButton.icon(onPressed: () {
-          Clipboard.setData(ClipboardData(text: finalCode));
-          toast(context, context.t('common.copied'));
-        }, icon: const Icon(Icons.copy_rounded), label: Text(context.t('common.copy')))),
-        const SizedBox(width: 12),
-        Expanded(child: FilledButton.icon(onPressed: () => Share.share(message), icon: const Icon(Icons.share_rounded), label: Text(context.t('common.share')))),
-      ]),
-      if (e.email.contains('@') && emailed != true) ...[
-        const SizedBox(height: 10),
-        TextButton.icon(
-          onPressed: () {
-            Navigator.pop(context);
-            showInviteSheet(context, ref, e, sendEmail: true);
-          },
-          icon: const Icon(Icons.mail_outline_rounded),
-          label: Text(context.t('invite.email_new')),
-        ),
-      ],
-    ]),
-  );
-}
-
 // ====================================================================== form
 
 class EmployeeFormScreen extends ConsumerStatefulWidget {
@@ -441,7 +434,7 @@ class EmployeeFormScreen extends ConsumerStatefulWidget {
 
 class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
   final _form = GlobalKey<FormState>();
-  bool _sendEmail = false;
+  String _sendVia = 'none'; // none | email | sms
   final _first = TextEditingController();
   final _last = TextEditingController();
   final _email = TextEditingController();
@@ -451,6 +444,12 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
   final _address = TextEditingController();
   final _emName = TextEditingController();
   final _emPhone = TextEditingController();
+  final _nationality = TextEditingController();
+  final _idNumber = TextEditingController();
+  final _iban = TextEditingController();
+  DateTime? _iqamaExpiry;
+  int? _iqamaMonths;
+  String? _workStatus; // own_sponsor | other_sponsor | irregular
   late int? _dept = widget.initialDepartment;
   int? _manager;
   int? _shift;
@@ -458,12 +457,13 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
   DateTime? _birth;
   String? _gender;
   String _status = 'active';
+  final _contract = ContractData();
   bool _loaded = false;
   bool _busy = false;
 
   @override
   void dispose() {
-    for (final c in [_first, _last, _email, _phone, _position, _salary, _address, _emName, _emPhone]) {
+    for (final c in [_first, _last, _email, _phone, _position, _salary, _address, _emName, _emPhone, _nationality, _idNumber, _iban]) {
       c.dispose();
     }
     super.dispose();
@@ -481,6 +481,12 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
     _address.text = e.address ?? '';
     _emName.text = e.emergencyName ?? '';
     _emPhone.text = e.emergencyPhone ?? '';
+    _nationality.text = e.nationality ?? '';
+    _idNumber.text = e.idNumber ?? '';
+    _iban.text = e.bankIban ?? '';
+    _iqamaExpiry = e.iqamaExpiry;
+    _iqamaMonths = e.iqamaRenewMonths;
+    _workStatus = e.workStatus;
     _dept = e.departmentId;
     _manager = e.managerId;
     _shift = e.shiftId;
@@ -488,6 +494,25 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
     _birth = e.birthDate;
     _gender = e.gender;
     _status = e.status;
+    _contract.type = e.contractType;
+    _contract.start = e.contractStart;
+    _contract.months = e.contractMonths;
+    _contract.end = e.contractEnd;
+  }
+
+  /// The first digit of the ID decides everything: 1 = Saudi, anything else = foreigner;
+  /// 2 = a residence (iqama): HR chooses whose sponsorship; any other digit = not regular, no sponsor.
+  void _idChanged(String v) {
+    final t = v.trim();
+    setState(() {
+      if (t.isEmpty) return;
+      _nationality.text = context.t(t.startsWith('1') ? 'emp.nat_saudi' : 'emp.nat_foreign');
+      if (t.startsWith('2')) {
+        if (_workStatus == 'irregular') _workStatus = null;
+      } else {
+        _workStatus = 'irregular';
+      }
+    });
   }
 
   Future<void> _pick(DateTime? initial, ValueChanged<DateTime> done, {DateTime? first, DateTime? last}) async {
@@ -500,6 +525,10 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
+    if (_idNumber.text.trim().startsWith('2') && _workStatus == null) {
+      toast(context, context.t('emp.work_status_required'), error: true);
+      return;
+    }
     if (!await confirmNewTitle(context, _position.text, _deptName(), _titlesIn())) return;     // a title that is not in the list: ask first
     setState(() => _busy = true);
     final editing = widget.id != null;
@@ -520,7 +549,14 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
       'emergencyName': _emName.text.trim(),
       'emergencyPhone': _emPhone.text.trim(),
       if (editing) 'status': _status,
-      if (!editing && _sendEmail) 'sendEmail': true,
+      'nationality': _nationality.text.trim(),
+      'idNumber': _idNumber.text.trim(),
+      'bankIban': _iban.text.trim(),
+      'workStatus': _idNumber.text.trim().isEmpty ? (_workStatus ?? '') : _workStatus,
+      'iqamaExpiry': _iqamaExpiry == null ? '' : ymd(_iqamaExpiry!),
+      'iqamaRenewMonths': _iqamaMonths,
+      ..._contract.toBody(),
+      if (!editing) 'sendVia': _sendVia,
     };
     try {
       final api = ref.read(apiProvider);
@@ -532,7 +568,7 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
       if (!mounted) return;
       final created = Employee.fromJson(data);
       if (!editing && created.inviteCode != null) {
-        await showInviteSheet(context, ref, created, existingCode: created.inviteCode, emailed: _sendEmail ? asMap(data)['emailed'] == true : null);
+        await showInviteSheet(context, ref, created, result: asMap(asMap(data)['invite']));
       } else {
         toast(context, context.t('common.saved'));
       }
@@ -574,10 +610,23 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
             Expanded(child: AppField(controller: _last, label: context.t('people.last_name'), capitalization: TextCapitalization.words, validator: (v) => requiredValidator(context, v))),
           ]),
           const SizedBox(height: 14),
-          AppField(controller: _email, label: context.t('auth.email.label'), icon: Icons.alternate_email_rounded, keyboard: TextInputType.emailAddress, validator: (v) => emailValidator(context, v)),
-          if (widget.id == null) SwitchListTile(contentPadding: EdgeInsets.zero, value: _sendEmail, onChanged: (v) => setState(() => _sendEmail = v), title: Text(context.t('invite.email_toggle'), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
+          AppField(controller: _email, label: context.t('emp.email_optional'), icon: Icons.alternate_email_rounded, keyboard: TextInputType.emailAddress, validator: (v) => (v ?? '').trim().isEmpty ? null : emailValidator(context, v)),
           const SizedBox(height: 14),
-          AppField(controller: _phone, label: context.t('common.phone'), icon: Icons.phone_outlined, keyboard: TextInputType.phone),
+          AppField(controller: _phone, label: context.t('emp.phone_optional'), icon: Icons.phone_outlined, keyboard: TextInputType.phone, validator: (v) => phoneOptionalValidator(context, v)),
+          Padding(padding: const EdgeInsets.only(top: 6), child: Text(context.t('emp.contact_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12, height: 1.4))),
+          if (widget.id == null) ...[
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _sendVia,
+              decoration: InputDecoration(labelText: context.t('emp.send_via'), prefixIcon: const Icon(Icons.send_rounded)),
+              items: [
+                DropdownMenuItem(value: 'none', child: Text(context.t('invite.no_send'))),
+                DropdownMenuItem(value: 'email', child: Text(context.t('invite.by_email'))),
+                DropdownMenuItem(value: 'sms', child: Text(context.t('invite.by_sms'))),
+              ],
+              onChanged: (v) => setState(() => _sendVia = v ?? 'none'),
+            ),
+          ],
           SectionHeader(context.t('people.employment')),
           titleSuggestField(context, _position, label: context.t('emp.position'), department: _deptName, existing: _titlesIn),
           const SizedBox(height: 14),
@@ -605,6 +654,40 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
           date(context.t('me.joined'), Icons.event_available_rounded, _start, () => _pick(_start, (d) => _start = d)),
           const SizedBox(height: 14),
           AppField(controller: _salary, label: context.t('people.salary'), icon: Icons.payments_outlined, keyboard: const TextInputType.numberWithOptions(decimal: true)),
+          SectionHeader(context.t('emp.id_section')),
+          AppField(controller: _idNumber, label: context.t('emp.id_number'), icon: Icons.badge_outlined, keyboard: TextInputType.number, onChanged: _idChanged),
+          const SizedBox(height: 14),
+          AppField(controller: _nationality, label: context.t('emp.nationality'), icon: Icons.flag_outlined, capitalization: TextCapitalization.words, readOnly: _idNumber.text.trim().isNotEmpty),
+          if (_idNumber.text.trim().startsWith('2')) ...[
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: const ['own_sponsor', 'other_sponsor'].contains(_workStatus) ? _workStatus : null,
+              decoration: InputDecoration(labelText: context.t('emp.work_status'), prefixIcon: const Icon(Icons.verified_user_outlined)),
+              items: [for (final s in const ['own_sponsor', 'other_sponsor']) DropdownMenuItem(value: s, child: Text(context.t('ws.$s')))],
+              onChanged: (v) => setState(() => _workStatus = v),
+            ),
+          ] else if (_idNumber.text.trim().isNotEmpty) ...[
+            const SizedBox(height: 14),
+            InputDecorator(
+              decoration: InputDecoration(labelText: context.t('emp.work_status'), prefixIcon: const Icon(Icons.verified_user_outlined)),
+              child: Text(context.t('ws.irregular')),
+            ),
+          ],
+          const SizedBox(height: 14),
+          AppField(controller: _iban, label: context.t('emp.iban'), icon: Icons.account_balance_outlined),
+          const SizedBox(height: 14),
+          date(context.t('emp.iqama_expiry'), Icons.event_busy_rounded, _iqamaExpiry, () => _pick(_iqamaExpiry, (d) => _iqamaExpiry = d, first: DateTime(2000))),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<int?>(
+            initialValue: const [3, 6, 12, 24].contains(_iqamaMonths) ? _iqamaMonths : null,
+            decoration: InputDecoration(labelText: context.t('emp.iqama_months'), prefixIcon: const Icon(Icons.autorenew_rounded)),
+            items: [const DropdownMenuItem<int?>(value: null, child: Text('—')), for (final m in const [3, 6, 12, 24]) DropdownMenuItem<int?>(value: m, child: Text('$m ${context.t('common.months')}'))],
+            onChanged: (v) => setState(() => _iqamaMonths = v),
+          ),
+          if (editing && async.value != null) ...[
+            SectionHeader(context.t('attx.title')),
+            AttendanceAccessCard(employee: async.value!),
+          ],
           if (editing) ...[
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
@@ -614,6 +697,8 @@ class _EmployeeFormScreenState extends ConsumerState<EmployeeFormScreen> {
               onChanged: (v) => setState(() => _status = v ?? 'active'),
             ),
           ],
+          SectionHeader(context.t('ctr.section')),
+          ContractFields(data: _contract, onChanged: () => setState(() {})),
           SectionHeader(context.t('people.personal')),
           date(context.t('emp.birth_date'), Icons.cake_outlined, _birth, () => _pick(_birth ?? DateTime(1995), (d) => _birth = d, last: DateTime.now())),
           const SizedBox(height: 14),

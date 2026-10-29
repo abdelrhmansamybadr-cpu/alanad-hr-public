@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../core/i18n/strings.dart';
 import 'theme.dart';
 import '../core/session/session.dart';
+import '../core/ui/responsive.dart';
 import '../core/ui/widgets.dart';
 import '../features/auth/auth_screens.dart';
 import '../features/group/group_screens.dart';
@@ -61,12 +62,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/auth/reset', builder: (_, s) => ResetScreen(email: _extra(s)['email'] ?? '')),
       employeeShellRoute(),
       hrShellRoute(),
-      ...sharedRoutes(),
-      ...employeeRoutes(),
-      ...hrRoutes(),
+      ..._framed([...sharedRoutes(), ...employeeRoutes(), ...hrRoutes()]),
     ],
   );
 });
+
+/// Pages that are lists / boards use more of a laptop screen; everything else (forms, details) stays at a reading width.
+const _widePages = {
+  '/directory', '/announcements', '/org', '/meetings', '/kudos', '/team', '/approvals', '/inbox', '/payslips', '/documents', '/rewards', '/holidays', '/my-reviews', '/complaints', '/complaints/owner',
+  '/h/departments', '/h/shifts', '/h/leave-types', '/h/doc-types', '/h/payroll', '/h/recruitment', '/h/talent', '/h/reviews', '/h/staff', '/h/group', '/h/group-access', '/h/hr-accounts', '/h/reports', '/h/audit',
+  '/h/onboarding', '/h/rewards', '/h/certificates', '/h/contracts', '/h/company', '/h/policies',
+};
+
+/// On a laptop, centre every pushed page and limit its width (a phone is not affected).
+List<RouteBase> _framed(List<RouteBase> routes) => [
+      for (final r in routes)
+        if (r is GoRoute && r.builder != null)
+          GoRoute(path: r.path, name: r.name, redirect: r.redirect, routes: r.routes, builder: (c, st) => DesktopPage(maxWidth: r.path == '/h/certificates/design' ? 1440 : (_widePages.contains(r.path) ? 1120 : 860), child: r.builder!(c, st)))
+        else
+          r,
+    ];
 
 /// Shown while the saved session is being checked, or when the server cannot be reached.
 class SplashScreen extends ConsumerWidget {

@@ -120,6 +120,8 @@ function auth_user_payload(PDO $pdo, array $user): array {
         $isLead = (bool)$s->fetchColumn();
     }
     $user['is_team_lead'] = $isLead;
+    require_once __DIR__ . '/../helpers/identity.php';
+    $user['email'] = email_public($user['email'] ?? '');
     return $user;
 }
 
@@ -141,7 +143,8 @@ function auth_session_response(PDO $pdo, array $user, int $status = 200): void {
 // ------------------------------------------------------------------- login
 
 function auth_login(array $body, PDO $pdo): void {
-    $email    = strtolower(trim($body['email'] ?? ''));
+    require_once __DIR__ . '/../helpers/identity.php';
+    $email    = identity_to_email($pdo, (string)($body['email'] ?? ''));      // an e-mail address or a mobile number
     $password = (string)($body['password'] ?? '');
 
     if ($email === '' || $password === '') {
@@ -161,6 +164,15 @@ function auth_login(array $body, PDO $pdo): void {
         throttle_hit($pdo, 'login:' . $email);
         throttle_hit($pdo, 'loginip:' . auth_client_ip());
         error_response('Invalid email or password', 401);
+    }
+    if ($user['status'] === 'active' && $user['role'] === 'employee' && !empty($user['employee_id'])) {
+        // a planned closing whose time has passed applies before the person gets in
+        require_once __DIR__ . '/../helpers/certificates.php';
+        hr_set_user($user);
+        exit_apply_due($pdo);
+        $re = $pdo->prepare("SELECT status FROM users WHERE id = ?");
+        $re->execute([$user['id']]);
+        $user['status'] = (string)$re->fetchColumn();
     }
     if ($user['status'] !== 'active') {
         error_response('Your account is not active. Please contact HR.', 403);
@@ -391,7 +403,8 @@ function handle_auth_employee(string $action, string $method, array $body, PDO $
 }
 
 function auth_employee_check_email(array $body, PDO $pdo): void {
-    $email = strtolower(trim($body['email'] ?? ''));
+    require_once __DIR__ . '/../helpers/identity.php';
+    $email = identity_to_email($pdo, (string)($body['email'] ?? ''));
     if ($email === '') {
         error_response('Email is required');
     }
@@ -447,7 +460,8 @@ function auth_use_invitation(PDO $pdo, int $employeeId, string $purpose, string 
 }
 
 function auth_employee_activate(array $body, PDO $pdo): void {
-    $email    = strtolower(trim($body['email'] ?? ''));
+    require_once __DIR__ . '/../helpers/identity.php';
+    $email    = identity_to_email($pdo, (string)($body['email'] ?? ''));
     $password = (string)($body['password'] ?? '');
     $code     = (string)($body['code'] ?? '');
 
@@ -476,11 +490,11 @@ function auth_employee_activate(array $body, PDO $pdo): void {
     auth_use_invitation($pdo, (int)$employee['id'], 'activate', $code);
 
     $pdo->prepare(
-        "INSERT INTO users (company_id, name, email, password_hash, role, status, employee_id, phone, avatar, created_at)
-         VALUES (?, ?, ?, ?, 'employee', 'active', ?, ?, ?, NOW())"
+        "INSERT INTO users (company_id, name, email, password_hash, role, status, employee_id, phone, phone_key, avatar, created_at)
+         VALUES (?, ?, ?, ?, 'employee', 'active', ?, ?, ?, ?, NOW())"
     )->execute([
         $employee['company_id'], $employee['first_name'] . ' ' . $employee['last_name'], $email,
-        password_hash($password, PASSWORD_BCRYPT), $employee['id'], $employee['phone'], $employee['avatar'],
+        password_hash($password, PASSWORD_BCRYPT), $employee['id'], $employee['phone'], phone_key($employee['phone']), $employee['avatar'],
     ]);
     $userId = (int)$pdo->lastInsertId();
 
@@ -490,16 +504,17 @@ function auth_employee_activate(array $body, PDO $pdo): void {
 }
 
 function auth_employee_forgot_password(array $body, PDO $pdo): void {
-    // Always the same answer, so nobody can find out which e-mail addresses have an account.
-    $generic = ['success' => true, 'message' => 'If this e-mail belongs to an account, a code has been sent to it. Otherwise ask your HR team for a reset code.'];
-    $email = strtolower(trim((string)($body['email'] ?? '')));
+    require_once __DIR__ . '/../helpers/identity.php';
+    // Always the same answer, so nobody can find out which e-mail addresses or numbers have an account.
+    $generic = ['success' => true, 'message' => 'If this account exists, a code has been sent to it. Otherwise ask your HR team for a reset code.'];
+    $email = identity_to_email($pdo, (string)($body['email'] ?? ''));
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_response($generic);
 
     if (throttle_count($pdo, 'forgot-ip:' . auth_client_ip(), 60) >= 10 || throttle_count($pdo, 'forgot-mail:' . $email, 60) >= 3) json_response($generic);
     throttle_hit($pdo, 'forgot-ip:' . auth_client_ip());
     throttle_hit($pdo, 'forgot-mail:' . $email);
 
-    $u = $pdo->prepare("SELECT u.id, u.company_id FROM users u WHERE u.email = ? AND u.status = 'active' LIMIT 1");
+    $u = $pdo->prepare("SELECT u.id, u.company_id, u.phone FROM users u WHERE u.email = ? AND u.status = 'active' LIMIT 1");
     $u->execute([$email]);
     $user = $u->fetch();
     if ($user) {
@@ -509,14 +524,58 @@ function auth_employee_forgot_password(array $body, PDO $pdo): void {
             ->execute([$user['id'], hash('sha256', $code)]);
         $c = $pdo->prepare("SELECT name FROM companies WHERE id = ?");
         $c->execute([$user['company_id']]);
-        require_once __DIR__ . '/../helpers/mailer.php';
-        mail_send_code($email, (string)($c->fetchColumn() ?: 'Al Anad HR'), 'reset', $code, '30 minutes');
+        $company = (string)($c->fetchColumn() ?: 'Al Anad HR');
+        // by e-mail, or by SMS when the person asks for it (and has a mobile number on the account)
+        $bySms = (($body['via'] ?? '') === 'sms') && phone_valid($user['phone']);
+        if (!$bySms && email_is_real($email)) {
+            require_once __DIR__ . '/../helpers/mailer.php';
+            mail_send_code($email, $company, 'reset', $code, '30 minutes');
+        } elseif (phone_valid($user['phone'])) {
+            require_once __DIR__ . '/../helpers/sms.php';
+            sms_send($user['phone'], sms_reset_text($company, $code));
+        }
+    } else {
+        // First sign-in: there is no account yet, so "send me a code" means "send my invitation again".
+        auth_resend_activation($pdo, $email, ($body['via'] ?? '') === 'sms');
     }
     json_response($generic);
 }
 
+/**
+ * The person is on the first-time screen and asks for a code: issue a new one-time invitation code for their employee
+ * record (the old ones stop working) and send it by e-mail or SMS. Silent when the person is unknown or already has an account.
+ */
+function auth_resend_activation(PDO $pdo, string $email, bool $viaSms): void {
+    $e = $pdo->prepare("SELECT id, company_id, email, phone FROM employees WHERE email = ? AND status != 'inactive' LIMIT 1");
+    $e->execute([$email]);
+    $emp = $e->fetch();
+    if (!$emp || !app_lock_allows($pdo, (int)$emp['company_id'])) return;
+    $has = $pdo->prepare("SELECT 1 FROM users WHERE email = ? OR (employee_id = ? AND role = 'employee') LIMIT 1");
+    $has->execute([$email, $emp['id']]);
+    if ($has->fetchColumn()) return;
+
+    $days = 7;
+    $pdo->prepare("UPDATE invitations SET used_at = NOW() WHERE employee_id = ? AND purpose = 'activate' AND used_at IS NULL")->execute([$emp['id']]);
+    $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $pdo->prepare("INSERT INTO invitations (company_id, employee_id, purpose, code_hash, expires_at, created_by) VALUES (?, ?, 'activate', ?, (NOW() + INTERVAL $days DAY), NULL)")
+        ->execute([$emp['company_id'], $emp['id'], hash('sha256', $code)]);
+    $c = $pdo->prepare("SELECT name FROM companies WHERE id = ?");
+    $c->execute([$emp['company_id']]);
+    $company = (string)($c->fetchColumn() ?: 'Al Anad HR');
+
+    $hasMail = email_is_real($emp['email'] ?? '');
+    if ((!$viaSms || !phone_valid($emp['phone'])) && $hasMail) {
+        require_once __DIR__ . '/../helpers/mailer.php';
+        mail_send_code((string)$emp['email'], $company, 'activate', $code, "$days days", (string)$emp['email']);
+    } elseif (phone_valid($emp['phone'])) {
+        require_once __DIR__ . '/../helpers/sms.php';
+        sms_send($emp['phone'], sms_invite_text($company, (string)$emp['phone'], $code, "$days days"));
+    }
+}
+
 function auth_employee_reset_password(array $body, PDO $pdo): void {
-    $email       = strtolower(trim($body['email'] ?? ''));
+    require_once __DIR__ . '/../helpers/identity.php';
+    $email       = identity_to_email($pdo, (string)($body['email'] ?? ''));
     $code        = (string)($body['code'] ?? $body['reset_token'] ?? $body['token'] ?? '');
     $newPassword = (string)($body['new_password'] ?? $body['password'] ?? '');
 

@@ -5,6 +5,7 @@ import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../data/providers.dart';
 import '../employee/requests_screen.dart';
 
@@ -62,11 +63,11 @@ class _ApprovalsScreenState extends ConsumerState<ApprovalsScreen> {
                     onRetry: () => ref.invalidate(leavesProvider(q)),
                     builder: (items) => items.isEmpty
                         ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.task_alt_rounded, title: context.t('approvals.empty'), subtitle: context.t('approvals.empty_hint')))])
-                        : ListView.separated(
+                        : AdaptiveList(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                             physics: const AlwaysScrollableScrollPhysics(),
                             itemCount: items.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            gap: 10,
                             itemBuilder: (_, i) => LeaveTile(leave: items[i], showEmployee: true, onTap: () => showLeaveDetail(context, ref, items[i], canReview: true)),
                           ),
                   )
@@ -75,11 +76,11 @@ class _ApprovalsScreenState extends ConsumerState<ApprovalsScreen> {
                     onRetry: () => ref.invalidate(requestsProvider(q)),
                     builder: (items) => items.isEmpty
                         ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.task_alt_rounded, title: context.t('approvals.empty'), subtitle: context.t('approvals.empty_hint')))])
-                        : ListView.separated(
+                        : AdaptiveList(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                             physics: const AlwaysScrollableScrollPhysics(),
                             itemCount: items.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            gap: 10,
                             itemBuilder: (_, i) => RequestTile(item: items[i], showEmployee: true, onTap: () => showRequestDetail(context, ref, items[i], canReview: true)),
                           ),
                   ),

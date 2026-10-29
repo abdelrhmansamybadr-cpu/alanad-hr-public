@@ -2,8 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:network_info_plus/network_info_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
+import '../../core/network/network_probe.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
@@ -16,6 +15,7 @@ import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
 import '../common/profile_widgets.dart';
 import 'org.dart';
+import 'wifi_picker.dart';
 
 const _moduleKeys = ['employees', 'departments', 'leaves', 'attendance', 'shifts', 'payroll', 'recruitment', 'talent_pool', 'reviews', 'announcements', 'documents', 'requests'];
 const _currencies = ['EGP', 'SAR', 'AED', 'KWD', 'QAR', 'BHD', 'OMR', 'JOD', 'USD', 'EUR', 'GBP'];
@@ -241,7 +241,7 @@ class AttendanceRulesScreen extends ConsumerWidget {
               title: jStr(r, 'name'),
               subtitle: [
                 if (jBool(r, 'locationEnabled')) context.t('rules.radius_m', {'n': (jDouble(r, 'locationRadiusKm') * 1000).round()}),
-                if (jBool(r, 'wifiEnabled')) 'Wi-Fi ${jStr(r, 'wifiSsid')}',
+                if (jBool(r, 'wifiEnabled')) (jStr(r, 'networkType') == 'wired' ? context.t('rules.wired_short') : 'Wi-Fi ${jStr(r, 'wifiSsid')}'),
                 if (jBool(r, 'locationEnabled') && jBool(r, 'wifiEnabled')) context.t(jStr(r, 'matchMode') == 'all' ? 'rules.mode_all' : 'rules.mode_any'),
                 if (!jBool(r, 'locationEnabled') && !jBool(r, 'wifiEnabled')) context.t('rules.anywhere'),
               ].join(' · '),
@@ -272,6 +272,10 @@ class _RuleFormState extends ConsumerState<_RuleForm> {
   late final _bssid = TextEditingController(text: widget.existing == null ? '' : jStr(widget.existing!, 'wifiBssid'));
   late bool _both = widget.existing != null && jStr(widget.existing!, 'matchMode') == 'all';
   bool _wifiBusy = false;
+  late String _netType = widget.existing != null && jStr(widget.existing!, 'networkType') == 'wired' ? 'wired' : 'wifi';
+  late String _gateway = widget.existing == null ? '' : jStr(widget.existing!, 'wiredGateway');
+  late bool _exact = widget.existing != null && jStr(widget.existing!, 'wifiBssid').isNotEmpty;
+  String _pickedBssid = '';
   late bool _loc = widget.existing != null && jBool(widget.existing!, 'locationEnabled');
   late bool _wifi = widget.existing != null && jBool(widget.existing!, 'wifiEnabled');
   late bool _active = widget.existing == null ? true : jBool(widget.existing!, 'isActive');
@@ -305,24 +309,32 @@ class _RuleFormState extends ConsumerState<_RuleForm> {
     }
   }
 
-  /// Fill the Wi-Fi fields from the network this phone is connected to right now.
-  Future<void> _thisWifi() async {
-    final none = context.t('rules.wifi_unreadable');
+  /// Pick the office Wi-Fi from the networks this device can see (it must be connected to it).
+  Future<void> _chooseWifi() async {
+    final net = await pickWifi(context);
+    if (net == null || !mounted) return;
+    setState(() {
+      _ssid.text = net.ssid;
+      _pickedBssid = net.bssid;
+      _bssid.text = _exact ? net.bssid : '';
+    });
+  }
+
+  /// Wired network: read this device's cable connection (its gateway address identifies the office network).
+  Future<void> _detectWired() async {
+    final none = context.t('rules.wired_none');
     setState(() => _wifiBusy = true);
     try {
-      await Permission.locationWhenInUse.request();
-      await Permission.nearbyWifiDevices.request();
-      final info = NetworkInfo();
-      final name = (await info.getWifiName())?.replaceAll('"', '');
-      final id = await info.getWifiBSSID();
-      if (name == null || name.isEmpty || name == '<unknown ssid>') {
-        if (mounted) toast(context, none, error: true);
+      final link = await NetworkProbe.current();
+      if (!mounted) return;
+      if (link.isWired) {
+        setState(() {
+          _gateway = link.gateway!;
+          _ssid.text = context.t('rules.wired_short');
+        });
       } else {
-        _ssid.text = name;
-        _bssid.text = (id ?? '').toLowerCase();
+        toast(context, none, error: true);
       }
-    } catch (_) {
-      if (mounted) toast(context, none, error: true);
     } finally {
       if (mounted) setState(() => _wifiBusy = false);
     }
@@ -331,9 +343,12 @@ class _RuleFormState extends ConsumerState<_RuleForm> {
   Future<void> _save() async {
     if (_name.text.trim().isEmpty) return toast(context, context.t('common.required'), error: true);
     if (_loc && (double.tryParse(_lat.text) == null || double.tryParse(_lng.text) == null)) return toast(context, context.t('rules.need_location'), error: true);
+    if (_wifi && _netType == 'wired' && _gateway.isEmpty) return toast(context, context.t('rules.pick_network'), error: true);
+    if (_wifi && _netType == 'wifi' && _ssid.text.trim().isEmpty) return toast(context, context.t('rules.pick_network'), error: true);
     setState(() => _busy = true);
     final nav = Navigator.of(context);
     try {
+      final wired = _wifi && _netType == 'wired';
       final body = {
         'name': _name.text.trim(),
         'isActive': _active,
@@ -343,7 +358,9 @@ class _RuleFormState extends ConsumerState<_RuleForm> {
         'locationRadiusKm': _loc ? (double.tryParse(_radius.text) ?? 200) / 1000 : null,
         'wifiEnabled': _wifi,
         'wifiSsid': _wifi ? _ssid.text.trim() : null,
-        'wifiBssid': _wifi ? _bssid.text.trim() : null,
+        'wifiBssid': _wifi && !wired && _exact ? _bssid.text.trim() : null,
+        'networkType': wired ? 'wired' : 'wifi',
+        'wiredGateway': wired ? _gateway : null,
         'matchMode': _both ? 'all' : 'any',
       };
       final api = ref.read(apiProvider);
@@ -376,12 +393,47 @@ class _RuleFormState extends ConsumerState<_RuleForm> {
         ],
         SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(context.t('rules.require_wifi')), value: _wifi, onChanged: (v) => setState(() => _wifi = v)),
         if (_wifi) ...[
-          AppField(controller: _ssid, label: context.t('rules.ssid'), icon: Icons.wifi_rounded),
-          const SizedBox(height: 12),
-          AppField(controller: _bssid, label: '${context.t('rules.bssid')} (${context.t('common.optional')})', icon: Icons.router_outlined),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: _wifiBusy ? null : _thisWifi, icon: _wifiBusy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.wifi_find_rounded), label: Text(context.t('rules.use_wifi')), style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46))),
-          Padding(padding: const EdgeInsets.only(top: 6), child: Text(context.t('rules.bssid_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12, height: 1.35))),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SegmentedButton<String>(
+              segments: [
+                ButtonSegment(value: 'wifi', icon: const Icon(Icons.wifi_rounded), label: Text(context.t('rules.net_wifi'))),
+                ButtonSegment(value: 'wired', icon: const Icon(Icons.settings_ethernet_rounded), label: Text(context.t('rules.net_wired'))),
+              ],
+              selected: {_netType},
+              onSelectionChanged: (v) => setState(() => _netType = v.first),
+            ),
+          ),
+          if (_netType == 'wifi') ...[
+            if (_ssid.text.trim().isNotEmpty)
+              AppCard(padding: const EdgeInsets.all(12), child: Row(children: [
+                IconBadge(Icons.wifi_rounded, color: context.scheme.primary, size: 40),
+                const SizedBox(width: 12),
+                Expanded(child: Text(_ssid.text.trim(), style: const TextStyle(fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis)),
+              ])),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(onPressed: _chooseWifi, icon: const Icon(Icons.wifi_find_rounded), label: Text(_ssid.text.trim().isEmpty ? context.t('rules.choose_wifi') : context.t('rules.change_wifi')), style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46))),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(context.t('rules.exact_router')),
+              subtitle: Text(context.t('rules.bssid_hint'), style: const TextStyle(fontSize: 12, height: 1.35)),
+              value: _exact,
+              onChanged: (v) => setState(() {
+                _exact = v;
+                _bssid.text = v ? (_pickedBssid.isNotEmpty ? _pickedBssid : _bssid.text) : '';
+              }),
+            ),
+          ] else ...[
+            if (_gateway.isNotEmpty)
+              AppCard(padding: const EdgeInsets.all(12), child: Row(children: [
+                IconBadge(Icons.settings_ethernet_rounded, color: context.scheme.primary, size: 40),
+                const SizedBox(width: 12),
+                Expanded(child: Text(context.t('rules.wired_selected', {'gw': _gateway}), style: const TextStyle(fontWeight: FontWeight.w800))),
+              ])),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(onPressed: _wifiBusy ? null : _detectWired, icon: _wifiBusy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cable_rounded), label: Text(context.t('rules.detect_wired')), style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(46))),
+            Padding(padding: const EdgeInsets.only(top: 6), child: Text(context.t('rules.wired_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12, height: 1.35))),
+          ],
         ],
         if (_loc && _wifi) SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(context.t('rules.both')), subtitle: Text(_both ? context.t('rules.both_on') : context.t('rules.both_off')), value: _both, onChanged: (v) => setState(() => _both = v)),
         const SizedBox(height: 18),

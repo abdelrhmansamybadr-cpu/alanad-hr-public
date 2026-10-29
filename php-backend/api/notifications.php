@@ -10,7 +10,11 @@
 function handle_notifications(string $path, string $method, array $body): void {
     $pdo = getDB();
     $sub = explode('/', $path)[1] ?? '';
-    if ($method === 'GET' && ($sub === 'count' || $sub === '')) { require_once __DIR__ . '/../helpers/reminders.php'; reminders_run($pdo); }
+    if ($method === 'GET' && ($sub === 'count' || $sub === '')) {
+        require_once __DIR__ . '/../helpers/reminders.php'; reminders_run($pdo);
+        require_once __DIR__ . '/../helpers/certificates.php'; exit_apply_due($pdo);           // accounts whose planned closing time has come
+        if (is_hr()) { require_once __DIR__ . '/../helpers/contracts.php'; contracts_tick($pdo); }   // contract expiry alarms (once a day)
+    }
 
     if ($sub === 'count' && $method === 'GET') {
         json_response(['success' => true, 'data' => ['unread_count' => notifications_unread($pdo)]]);

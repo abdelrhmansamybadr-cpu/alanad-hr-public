@@ -1,4 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useLocation } from "wouter";
+import { api } from "@/lib/http";
 import { Bell, Search } from "lucide-react";
 import { useLang } from "@/contexts/LanguageContext";
 import { useNotifications } from "@/contexts/NotificationContext";
@@ -14,6 +16,86 @@ function getInitials(name: string) {
     .slice(0, 2)
     .map((p) => p[0].toUpperCase())
     .join("");
+}
+
+/** The search box in the top bar: finds employees of the open company (name in any Arabic spelling, ID, mobile, job, nationality). */
+function GlobalSearch() {
+  const { t, isRTL } = useLang();
+  const { user, switchCompany } = useAuth();
+  const { isOwner } = useOwnerMe();
+  const [, navigate] = useLocation();
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const isHr = user?.role === "hr_admin" || user?.role === "hr_manager";
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!isHr || term.length < 2) { setRows([]); return; }
+    setBusy(true);
+    const h = setTimeout(async () => {
+      try {
+        // The owner searches EVERY company of the group; everybody else only the company they are working in.
+        const r: any = await api((isOwner ? "/group/search?q=" : "/employees?q=") + encodeURIComponent(term));
+        const list = Array.isArray(r) ? r : Array.isArray(r?.data) ? r.data : [];
+        setRows(list.slice(0, isOwner ? 15 : 8));
+      } catch { setRows([]); }
+      setBusy(false);
+    }, 300);
+    return () => clearTimeout(h);
+  }, [q, isHr, isOwner]);
+
+  useEffect(() => {
+    const off = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", off);
+    return () => document.removeEventListener("mousedown", off);
+  }, []);
+
+  const go = (term: string) => { setOpen(false); navigate("/employees?q=" + encodeURIComponent(term)); };
+  const none = isRTL ? "لا توجد نتائج" : "No results";
+
+  return (
+    <div ref={box} className="relative w-full max-w-md group">
+      <div className={`absolute inset-y-0 ${isRTL ? "right-0 pr-3" : "left-0 pl-3"} flex items-center pointer-events-none`}>
+        <Search className="h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+      </div>
+      <input
+        type="text"
+        value={q}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) go(q.trim()); if (e.key === "Escape") setOpen(false); }}
+        className={`block w-full ${isRTL ? "pr-10 pl-3 text-right" : "pl-10 pr-3"} py-2 border-none bg-muted/50 rounded-xl leading-5 text-foreground placeholder-muted-foreground focus:outline-none focus:bg-background focus:ring-2 focus:ring-primary/20 sm:text-sm transition-all duration-200`}
+        placeholder={t.searchPlaceholder}
+      />
+      {open && isHr && q.trim().length >= 2 && (
+        <div className="absolute top-full mt-2 w-full bg-background border border-border rounded-xl shadow-lg overflow-hidden z-50">
+          {rows.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">{busy ? "…" : none}</p>
+          ) : (
+            rows.map((r) => (
+              <button
+                key={`${r.companyId ?? 0}-${r.id}`}
+                onClick={() => {
+                  const term = `${r.firstName} ${r.lastName}`.trim();
+                  // a result from another company: open that company first, then the employee list filtered to the person
+                  if (isOwner && r.companyId && r.isCurrent === false) { setOpen(false); void switchCompany(r.companyId, "/employees?q=" + encodeURIComponent(term)).catch(() => {}); }
+                  else go(term);
+                }}
+                className="w-full text-start px-4 py-2.5 hover:bg-muted flex flex-col"
+              >
+                <span className="text-sm font-semibold text-foreground">{r.firstName} {r.lastName}</span>
+                <span className="text-xs text-muted-foreground">{[r.position, r.departmentName, r.idNumber].filter(Boolean).join(" · ")}</span>
+                {isOwner && r.companyName && <span className="text-[11px] text-primary font-medium">{r.companyName}</span>}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Header() {
@@ -34,16 +116,7 @@ export function Header() {
   return (
     <header className="h-16 flex items-center justify-between px-8 bg-background border-b border-border/60 sticky top-0 z-10">
       <div className="flex-1 flex items-center">
-        <div className={`relative w-full max-w-md group`}>
-          <div className={`absolute inset-y-0 ${isRTL ? "right-0 pr-3" : "left-0 pl-3"} flex items-center pointer-events-none`}>
-            <Search className="h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-          </div>
-          <input
-            type="text"
-            className={`block w-full ${isRTL ? "pr-10 pl-3 text-right" : "pl-10 pr-3"} py-2 border-none bg-muted/50 rounded-xl leading-5 text-foreground placeholder-muted-foreground focus:outline-none focus:bg-background focus:ring-2 focus:ring-primary/20 sm:text-sm transition-all duration-200`}
-            placeholder={t.searchPlaceholder}
-          />
-        </div>
+        <GlobalSearch />
       </div>
 
       <div className={`${isRTL ? "mr-4" : "ml-4"} flex items-center gap-3`}>

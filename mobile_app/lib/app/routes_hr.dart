@@ -1,3 +1,4 @@
+import '../core/ui/responsive.dart';
 import '../features/hr/loans.dart';
 import '../features/onboarding/onboarding.dart';
 import 'package:flutter/material.dart';
@@ -24,16 +25,20 @@ import '../features/hr/recruitment.dart';
 import '../features/hr/reviews_manage.dart';
 import '../features/hr/staff.dart';
 import '../features/group/group_screens.dart';
+import '../features/certificates/cert_designer.dart';
+import '../features/certificates/cert_model.dart';
+import '../features/certificates/cert_screens.dart';
+import '../features/certificates/contract_widgets.dart';
 
 /// The 5-tab HR app: Home · People · Attendance · Approvals · More.
 RouteBase hrShellRoute() => StatefulShellRoute.indexedStack(
       builder: (context, state, shell) => HrShell(shell: shell),
       branches: [
-        StatefulShellBranch(routes: [GoRoute(path: '/h/home', builder: (_, __) => const HrHome())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/h/people', builder: (_, __) => const PeopleScreen())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/h/attendance', builder: (_, __) => const AttendanceBoardScreen())]),
-        StatefulShellBranch(routes: [GoRoute(path: '/h/approvals', builder: (_, __) => const ApprovalsScreen(asTab: true))]),
-        StatefulShellBranch(routes: [GoRoute(path: '/h/more', builder: (_, __) => const HrMoreScreen())]),
+        StatefulShellBranch(routes: [GoRoute(path: '/h/home', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: HrHome()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/h/people', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: PeopleScreen()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/h/attendance', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: AttendanceBoardScreen()))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/h/approvals', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: ApprovalsScreen(asTab: true)))]),
+        StatefulShellBranch(routes: [GoRoute(path: '/h/more', builder: (_, __) => const DesktopPage(maxWidth: 1180, child: HrMoreScreen()))]),
       ],
     );
 
@@ -63,6 +68,10 @@ List<RouteBase> hrRoutes() => [
       GoRoute(path: '/h/staff', builder: (_, __) => const StaffScreen()),
       GoRoute(path: '/h/group', builder: (_, __) => const GroupCompaniesScreen()),
       GoRoute(path: '/h/group-access', builder: (_, __) => const GroupAccessScreen()),
+      GoRoute(path: '/h/hr-accounts', builder: (_, __) => const HrAccountsScreen()),
+      GoRoute(path: '/h/certificates', builder: (_, s) => CertificatesScreen(employeeId: int.tryParse(s.uri.queryParameters['employee'] ?? ''))),
+      GoRoute(path: '/h/certificates/design', builder: (_, s) => CertDesignerScreen(initial: s.extra is CertTemplate ? s.extra as CertTemplate : CertTemplate())),
+      GoRoute(path: '/h/contracts', builder: (_, __) => const ContractsScreen()),
       GoRoute(path: '/h/company', builder: (_, __) => const CompanySettingsScreen()),
       GoRoute(path: '/h/attendance-rules', builder: (_, __) => const AttendanceRulesScreen()),
     ];
@@ -76,7 +85,7 @@ class HrShell extends ConsumerWidget {
     final pending = ref.watch(hrStatsProvider).valueOrNull?.pendingApprovals ?? 0;
     return Scaffold(
       body: shell,
-      bottomNavigationBar: FloatingNavBar(
+      bottomNavigationBar: context.isDesktop ? null : FloatingNavBar(
         index: shell.currentIndex,
         onTap: (i) => shell.goBranch(i, initialLocation: i == shell.currentIndex),
         items: [

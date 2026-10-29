@@ -59,7 +59,6 @@ class WelcomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notice = ref.watch(sessionProvider).notice;
     final gradient = brandGradient(context);
     return Scaffold(
       body: Container(
@@ -70,35 +69,50 @@ class WelcomeScreen extends ConsumerWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const Align(alignment: AlignmentDirectional.centerEnd, child: LanguageToggle(onDark: true)),
               Expanded(
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const _FloatingCards(),
-                  const SizedBox(height: 36),
-                  const BrandMark(size: 72, onDark: true),
-                  const SizedBox(height: 22),
-                  Text(context.t('auth.welcome.title', {'app': AppConfig.productName}),
-                      textAlign: TextAlign.center, style: context.text.headlineMedium?.copyWith(color: Colors.white)),
-                  const SizedBox(height: 10),
-                  Text(context.t('auth.welcome.subtitle'), textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 15, height: 1.5)),
-                  if (notice == 'expired') ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(12)),
-                      child: Text(context.t('auth.session_expired'), style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
-                    ),
-                  ],
-                ]),
+                child: LayoutBuilder(
+                  builder: (context, box) => SingleChildScrollView(
+                    child: ConstrainedBox(constraints: BoxConstraints(minHeight: box.maxHeight), child: const Center(child: WelcomeHero())),
+                  ),
+                ),
               ),
-              FilledButton(
-                onPressed: () => context.push('/auth/email'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: context.scheme.primary),
-                child: Text(context.t('auth.continue_email')),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: context.scheme.surface, borderRadius: BorderRadius.circular(22)),
+                child: const EmailCheckForm(autofocus: false),
               ),
             ]),
           ),
         ),
       ),
     );
+  }
+}
+
+/// The centre of the welcome page: floating preview cards, logo, title and subtitle. Shared by the phone page and the laptop's brand panel.
+class WelcomeHero extends ConsumerWidget {
+  final bool wide;
+  const WelcomeHero({super.key, this.wide = false});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notice = ref.watch(sessionProvider).notice;
+    return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      const _FloatingCards(),
+      SizedBox(height: wide ? 48 : 36),
+      BrandMark(size: wide ? 88 : 72, onDark: true),
+      const SizedBox(height: 22),
+      Text(context.t('auth.welcome.title', {'app': AppConfig.productName}), textAlign: TextAlign.center, style: (wide ? context.text.headlineLarge : context.text.headlineMedium)?.copyWith(color: Colors.white)),
+      const SizedBox(height: 10),
+      ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520), child: Text(context.t('auth.welcome.subtitle'), textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: wide ? 16.5 : 15, height: 1.5))),
+      if (notice == 'expired') ...[
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(12)),
+          child: Text(context.t('auth.session_expired'), style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
+        ),
+      ],
+    ]);
   }
 }
 
@@ -172,6 +186,28 @@ class EmailScreen extends ConsumerStatefulWidget {
 }
 
 class _EmailScreenState extends ConsumerState<EmailScreen> {
+  @override
+  Widget build(BuildContext context) => AuthScaffold(
+        title: context.t('auth.email.title'),
+        subtitle: context.t('auth.email.subtitle'),
+        children: const [EmailCheckForm()],
+      );
+}
+
+/// The first step of signing in, shared by the welcome page (phone + laptop) and the e-mail page: the person types their
+/// e-mail or mobile number, the server says who they are and the app shows the next field -
+/// first time -> the one-time code from their e-mail (and a new password); already activated -> their password.
+class EmailCheckForm extends ConsumerStatefulWidget {
+  final bool autofocus;
+  /// The laptop's sign-in panel is built ABOVE the app's navigator, where `context.push` cannot find the router: it passes it in.
+  final GoRouter? router;
+  const EmailCheckForm({super.key, this.autofocus = true, this.router});
+
+  @override
+  ConsumerState<EmailCheckForm> createState() => _EmailCheckFormState();
+}
+
+class _EmailCheckFormState extends ConsumerState<EmailCheckForm> {
   final _form = GlobalKey<FormState>();
   final _email = TextEditingController();
   bool _loading = false;
@@ -193,48 +229,47 @@ class _EmailScreenState extends ConsumerState<EmailScreen> {
     try {
       final data = asMap(await ref.read(apiProvider).post('/auth/employee/check-email', {'email': email}));
       if (!mounted) return;
+      final router = widget.router ?? GoRouter.of(context);
       switch (jStr(data, 'status')) {
         case 'hr':
         case 'active':
-          context.push('/auth/password', extra: {'email': email, 'hr': jStr(data, 'status') == 'hr'});
+          router.push('/auth/password', extra: {'email': email, 'hr': jStr(data, 'status') == 'hr'});
         case 'needs_activation':
-          context.push('/auth/activate', extra: {'email': email});
+          router.push('/auth/activate', extra: {'email': email});
         default:
           setState(() => _error = context.t('auth.email.not_found'));
       }
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());   // never fail silently
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => AuthScaffold(
-        title: context.t('auth.email.title'),
-        subtitle: context.t('auth.email.subtitle'),
-        children: [
-          Form(
-            key: _form,
-            child: AppField(
-              controller: _email,
-              label: context.t('auth.email.label'),
-              icon: Icons.alternate_email_rounded,
-              keyboard: TextInputType.emailAddress,
-              action: TextInputAction.done,
-              autofocus: true,
-              onSubmitted: (_) => _next(),
-              validator: (v) => emailValidator(context, v),
-            ),
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Form(
+          key: _form,
+          child: AppField(
+            controller: _email,
+            label: context.t('auth.identity.label'),
+            icon: Icons.alternate_email_rounded,
+            keyboard: TextInputType.emailAddress,
+            action: TextInputAction.done,
+            autofocus: widget.autofocus,
+            onSubmitted: (_) => _next(),
+            validator: (v) => identityValidator(context, v),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            _Notice(_error!, error: true),
-          ],
-          const SizedBox(height: 24),
-          LoadingButton(label: context.t('common.next'), loading: _loading, onPressed: _next),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 16),
+          _Notice(_error!, error: true),
         ],
-      );
+        const SizedBox(height: 20),
+        LoadingButton(label: context.t('common.next'), loading: _loading, onPressed: _next),
+      ]);
 }
 
 class _Notice extends StatelessWidget {
@@ -360,12 +395,12 @@ class _ActivateScreenState extends ConsumerState<ActivateScreen> {
   bool _sending = false;
   String? _error;
 
-  /// Ask the server to e-mail a one-time code to this account (the answer is always the same, whether or not the address exists).
-  Future<void> _emailCode() async {
-    final sent = context.t('auth.reset.email_sent');
+  /// Ask the server to send a one-time code to this account, by e-mail or SMS (the answer is always the same, whether or not the address exists).
+  Future<void> _emailCode({bool sms = false}) async {
+    final sent = context.t(sms ? 'auth.reset.sms_sent' : 'auth.reset.email_sent');
     setState(() => _sending = true);
     try {
-      await ref.read(apiProvider).post('/auth/employee/forgot-password', {'email': widget.email});
+      await ref.read(apiProvider).post('/auth/employee/forgot-password', {'email': widget.email, if (sms) 'via': 'sms'});
       if (mounted) toast(context, sent);
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message, error: true);
@@ -409,6 +444,11 @@ class _ActivateScreenState extends ConsumerState<ActivateScreen> {
             onPressed: _sending ? null : _emailCode,
             icon: _sending ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.mark_email_unread_outlined),
             label: Text(context.t('auth.reset.email_me')),
+          ),
+          TextButton.icon(
+            onPressed: _sending ? null : () => _emailCode(sms: true),
+            icon: const Icon(Icons.sms_outlined, size: 18),
+            label: Text(context.t('auth.reset.sms_me')),
           ),
           const SizedBox(height: 6),
           Text(context.t('auth.reset.email_hint'), textAlign: TextAlign.center, style: TextStyle(color: context.colors.subtext, fontSize: 12)),

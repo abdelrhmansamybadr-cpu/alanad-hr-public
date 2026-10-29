@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -48,6 +49,17 @@ class Api {
   Future<dynamic> upload(String path, String filePath, {String field = 'file', String? filename}) async {
     final form = FormData.fromMap({field: await MultipartFile.fromFile(filePath, filename: filename)});
     return _send(() => _dio.post(path, data: form, options: _opts));
+  }
+
+  /// A protected picture / file as bytes (certificate pictures).
+  Future<Uint8List> getBytes(String path) async {
+    try {
+      final r = await _dio.get<List<int>>(path, options: Options(responseType: ResponseType.bytes, headers: {if (token != null) 'Authorization': 'Bearer $token'}));
+      if ((r.statusCode ?? 500) >= 400 || r.data == null) throw const ApiException('Could not load the picture');
+      return Uint8List.fromList(r.data!);
+    } on DioException catch (e) {
+      throw _map(e);
+    }
   }
 
   /// Downloads a protected file (e.g. an employee document) to [savePath].

@@ -116,6 +116,29 @@ class PushService {
     }
   }
 
+  /// Are system notifications allowed for this app right now?
+  static Future<bool> permissionGranted() async {
+    if (kIsWeb || !Platform.isAndroid) return true;
+    try {
+      await _ensure();
+      return await _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.areNotificationsEnabled() ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Show the system "Allow notifications?" box (Android 13+). Returns whether notifications are allowed afterwards.
+  static Future<bool> requestPermission() async {
+    if (kIsWeb || !Platform.isAndroid) return true;
+    try {
+      await _ensure();
+      final ok = await _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
+      return ok ?? await permissionGranted();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Ask for permission (Android 13+) and start the background check. Call after sign-in.
   static Future<void> enable() async {
     if (kIsWeb || !Platform.isAndroid || !await isEnabled()) return;

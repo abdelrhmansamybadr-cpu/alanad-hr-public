@@ -27,7 +27,21 @@ function handle_directory(string $path, string $method, array $body): void {
          WHERE " . implode(' AND ', $where) . " ORDER BY e.first_name, e.last_name LIMIT 500"
     );
     $s->execute($params);
-    json_response(['success' => true, 'data' => $s->fetchAll()]);
+    $rows = $s->fetchAll();
+    // colleagues other companies of the group share with this company
+    if (empty($_GET['department_id']) && !empty($_GET['include_shared'])) {
+        $q = $pdo->prepare(
+            "SELECT e.id, e.first_name, e.last_name, e.position, e.email, e.phone, e.avatar, e.department_id, d.name AS department_name, e.manager_id, c.name AS shared_from
+             FROM group_shares g JOIN employees e ON e.id = g.item_id AND e.company_id = g.source_company_id
+             JOIN companies c ON c.id = e.company_id LEFT JOIN departments d ON d.id = e.department_id
+             WHERE g.kind = 'employee' AND g.target_company_id = ? AND e.status != 'inactive'"
+            . (!empty($_GET['q']) ? " AND (CONCAT(e.first_name, ' ', e.last_name) LIKE ? OR e.position LIKE ? OR d.name LIKE ?)" : ''));
+        $qp = [cid()];
+        if (!empty($_GET['q'])) { $like = '%' . $_GET['q'] . '%'; array_push($qp, $like, $like, $like); }
+        $q->execute($qp);
+        foreach ($q->fetchAll() as $r) { $r['shared'] = true; $rows[] = $r; }
+    }
+    json_response(['success' => true, 'data' => $rows]);
 }
 
 function handle_team(string $path, string $method, array $body): void {

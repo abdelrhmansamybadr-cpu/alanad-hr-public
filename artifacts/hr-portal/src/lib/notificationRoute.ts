@@ -7,6 +7,8 @@ export function routeForNotification(type: string, data?: any): string {
   const meetingId = Number(data?.meetingId ?? data?.meeting_id);
   if (t === "meeting") return Number.isFinite(meetingId) && meetingId > 0 ? `/meetings/${meetingId}` : "/meetings";
   if (t === "complaint") return "/complaints";
+  if (t === "contract_expiry" || t === "contract_renewed") return "/contracts";
+  if (t === "exit_open" || t === "account_closed") return "/certificates";
   if (t === "chain_head_approved") return "/leaves";
   if (t === "leave_request" || t.startsWith("leave")) return "/leaves";
   if (t.startsWith("request")) return "/requests";

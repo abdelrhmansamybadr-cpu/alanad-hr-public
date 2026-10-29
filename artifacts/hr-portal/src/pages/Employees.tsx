@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLocation, useSearch } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   useListEmployees,
   useCreateEmployee,
@@ -10,7 +10,8 @@ import {
   useListDepartments,
   type Employee,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/http";
 import {
   Plus,
   Search,
@@ -21,6 +22,11 @@ import {
   FileText,
   KeyRound,
   Sparkles,
+  Award,
+  Send,
+  AlertCircle,
+  Share2,
+  ArrowRightLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
@@ -28,6 +34,12 @@ import { useLang } from "@/contexts/LanguageContext";
 import EmployeeDocuments from "./EmployeeDocuments";
 import { EmployeeHub } from "@/components/EmployeeHub";
 import { PositionInput, confirmNewTitle } from "@/components/Suggest";
+import { ContractFields, ContractChip, contractFromForm } from "@/components/Contract";
+import { InviteModal, InviteAllModal, missingLabels } from "@/components/InviteModals";
+import { AttendanceAccess } from "@/components/AttendanceAccess";
+import { EmployeeExtraFields, FirstSignin, IqamaChip, extraFromForm, normSearch } from "@/components/EmployeeExtra";
+import { ShareDialog } from "@/components/ShareDialog";
+import { TransferDialog } from "@/components/TransferDialog";
 
 const bad = (m: string): void => { toast.error(m); };
 
@@ -54,6 +66,8 @@ export default function Employees() {
   const [selectedEmployeeForDocs, setSelectedEmployeeForDocs] =
     useState<Employee | null>(null);
   const [hubEmployee, setHubEmployee] = useState<Employee | null>(null);
+  const [shareFor, setShareFor] = useState<Employee | null>(null);
+  const [transferFor, setTransferFor] = useState<Employee | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
   const [prefill, setPrefill] = useState<Record<string, string> | null>(null);
@@ -61,10 +75,14 @@ export default function Employees() {
   const [addPos, setAddPos] = useState<string>("");
   const [editDept, setEditDept] = useState<string>("");
   const [editPos, setEditPos] = useState<string>("");
+  const [inviteFor, setInviteFor] = useState<any | null>(null);
+  const [inviteAll, setInviteAll] = useState(false);
+  const [onlyIncomplete, setOnlyIncomplete] = useState(false);
   const { t, isRTL } = useLang();
 
   useEffect(() => {
     const p = new URLSearchParams(search);
+    if (p.get("q")) setSearchTerm(p.get("q") ?? "");
     if (p.get("from") === "talent" && p.get("appId")) {
       setPrefill({
         firstName: p.get("firstName") ?? "",
@@ -79,12 +97,16 @@ export default function Employees() {
     }
   }, [search]);
 
-  const { data: employees = [], isLoading } = useListEmployees();
+  const { data: ownEmployees = [], isLoading } = useListEmployees();
+  // people other companies of the group share with this one (read-only); the normal list stays own-company only
+  const { data: sharedIn = [] } = useQuery<any[]>({ queryKey: ["employees-shared-in"], queryFn: () => api("/employees/shared-in"), retry: false });
+  const employees = [...ownEmployees, ...(sharedIn as any[])] as typeof ownEmployees;
   const { data: departments = [] } = useListDepartments();
 
   const handleMutationError = (err: any) => {
     if (err?.status === 401) { navigate("/login"); return; }
     const msg: string = err?.data?.error || err?.message || "";
+    if (/mobile number/i.test(msg)) { alert(msg); return; }
     const isEmailConflict = err?.status === 409 || msg.toLowerCase().includes("email") || msg.toLowerCase().includes("unique");
     alert(isRTL
       ? isEmailConflict ? "البريد الإلكتروني مستخدم بالفعل لموظف آخر" : `فشل الحفظ: ${msg}`
@@ -100,10 +122,15 @@ export default function Employees() {
         queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() });
         setIsAddOpen(false);
         const code = (newEmployee as any)?.inviteCode;
-        if (code) {
+        const inv = (newEmployee as any)?.invite;
+        if (inv?.sent) {
+          toast.success(isRTL ? `تم إنشاء الموظف وإرسال الدعوة ${inv.channel === "sms" ? "برسالة نصية" : "بالبريد"}` : `Employee created and the invitation was sent by ${inv.channel === "sms" ? "SMS" : "e-mail"}.`, { duration: 15000 });
+        } else if (inv && inv.channel && inv.sent === false) {
+          toast.error(isRTL ? `تم إنشاء الموظف لكن تعذر الإرسال: ${inv.error}. الكود: ${code}` : `Employee created, but the invitation could not be sent: ${inv.error}. Code: ${code}`, { duration: 120000 });
+        } else if (code) {
           toast.success(
             isRTL ? `تم إنشاء الموظف. كود الدعوة: ${code}` : `Employee created. Invite code: ${code}`,
-            { description: isRTL ? "أعطِ الكود للموظف ليدخله في التطبيق مع بريده (صالح 7 أيام)." : "Give this code to the employee; they enter it in the app with their email (valid 7 days).", duration: 120000 },
+            { description: isRTL ? "لم يُرسل شيء. أعطِ الكود للموظف أو استخدم زر الدعوة لإرساله بالبريد أو الرسائل." : "Nothing was sent. Give the code to the employee, or use the invite button to send it by e-mail or SMS.", duration: 120000 },
           );
         }
         if (prefill?.appId) {
@@ -152,14 +179,17 @@ export default function Employees() {
       data: {
         firstName: formData.get("firstName") as string,
         lastName: formData.get("lastName") as string,
-        email: formData.get("email") as string,
-        phone: formData.get("phone") as string,
+        email: ((formData.get("email") as string) || undefined) as any,
+        phone: (formData.get("phone") as string) || undefined,
+        sendVia: (formData.get("sendVia") as string) || "none",
+        ...extraFromForm(formData),
         position: formData.get("position") as string,
         departmentId: Number(formData.get("departmentId")),
         status: formData.get("status") as string,
         startDate: formData.get("startDate") as string,
         salary: formData.get("salary") ? Number(formData.get("salary")) : undefined,
-      },
+        ...contractFromForm(formData),
+      } as any,
     });
   };
 
@@ -173,25 +203,25 @@ export default function Employees() {
       data: {
         firstName: formData.get("firstName") as string,
         lastName: formData.get("lastName") as string,
-        email: formData.get("email") as string,
-        phone: formData.get("phone") as string,
+        email: ((formData.get("email") as string) ?? "") as any,
+        phone: (formData.get("phone") as string) ?? "",
+        ...extraFromForm(formData),
         position: formData.get("position") as string,
         departmentId: Number(formData.get("departmentId")),
         status: formData.get("status") as string,
         startDate: formData.get("startDate") as string,
         salary: formData.get("salary") ? Number(formData.get("salary")) : undefined,
-      },
+        ...contractFromForm(formData),
+      } as any,
     });
   };
 
+  const incompleteCount = employees.filter((e) => (e as any).incomplete).length;
   const filteredEmployees = employees.filter(
     (e) =>
       (!selectedDeptId || e.departmentId === selectedDeptId) &&
-      ((e.firstName + " " + e.lastName)
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-        e.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        e.position.toLowerCase().includes(searchTerm.toLowerCase())),
+      (!onlyIncomplete || (e as any).incomplete) &&
+      normSearch([e.firstName, e.lastName, e.email, (e as any).phone, e.position, (e as any).nationality, (e as any).idNumber, (e as any).bankIban, (e as any).departmentName].join(" ")).includes(normSearch(searchTerm)),
   );
 
   const getDeptEmployeeCount = (deptId: number) =>
@@ -214,13 +244,22 @@ export default function Employees() {
           </h1>
           <p className="text-muted-foreground mt-1">{t.manageTeam}</p>
         </div>
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
-          data-testid="button-add-employee"
-        >
-          <Plus className="w-4 h-4" /> {t.addEmployee}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setInviteAll(true)}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-xl font-medium hover:bg-muted transition-colors"
+            data-testid="button-invite-all"
+          >
+            <Send className="w-4 h-4" /> {isRTL ? "إرسال الدعوات للجميع" : "Send invitations"}
+          </button>
+          <button
+            onClick={() => setIsAddOpen(true)}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
+            data-testid="button-add-employee"
+          >
+            <Plus className="w-4 h-4" /> {t.addEmployee}
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-2">
@@ -234,6 +273,14 @@ export default function Employees() {
         >
           {t.all} ({employees.length})
         </button>
+        {incompleteCount > 0 && (
+          <button
+            onClick={() => setOnlyIncomplete((v) => !v)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${onlyIncomplete ? "bg-amber-500 text-white border-amber-500" : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"}`}
+          >
+            {isRTL ? `بيانات ناقصة (${incompleteCount})` : `Incomplete (${incompleteCount})`}
+          </button>
+        )}
         {departments.map((dept) => {
           const count = getDeptEmployeeCount(dept.id);
           return (
@@ -338,25 +385,45 @@ export default function Employees() {
                           <p className="font-semibold text-foreground">
                             {employee.firstName} {employee.lastName}
                           </p>
+                          {(employee as any).shared ? (
+                            <div className="mt-1 inline-flex px-2 py-0.5 rounded-full text-[11px] border bg-sky-50 text-sky-800 border-sky-200">{(isRTL ? "من " : "From ") + (employee as any).sharedFrom}</div>
+                          ) : (employee as any).sharedCount > 0 ? (
+                            <div className="mt-1 inline-flex px-2 py-0.5 rounded-full text-[11px] border bg-sky-50 text-sky-800 border-sky-200">{isRTL ? `مشارك مع ${(employee as any).sharedCount}` : `Shared with ${(employee as any).sharedCount}`}</div>
+                          ) : null}
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {employee.position}
                           </p>
+                          <ContractChip type={(employee as any).contractType} end={(employee as any).contractEnd} />
+                          <div><IqamaChip expiry={(employee as any).iqamaExpiry} /></div>
+                          <div><FirstSignin at={(employee as any).firstSigninAt} /></div>
+                          {(employee as any).attendanceBlocked ? <div className="mt-1 inline-flex px-2 py-0.5 rounded-full text-[11px] border bg-red-50 text-red-800 border-red-200">{isRTL ? "الحضور محظور" : "Attendance blocked"}</div> : (employee as any).attendanceMode && (employee as any).attendanceMode !== "company" ? <div className="mt-1 inline-flex px-2 py-0.5 rounded-full text-[11px] border bg-sky-50 text-sky-800 border-sky-200">{isRTL ? "استثناء في الحضور" : "Attendance exception"}</div> : null}
+                          {(employee as any).incomplete && (
+                            <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border bg-amber-50 text-amber-800 border-amber-200" title={missingLabels((en, ar) => (isRTL ? ar : en), (employee as any).missing).join("، ")}>
+                              <AlertCircle className="w-3 h-3" />
+                              {(isRTL ? "ناقص: " : "Missing: ") + missingLabels((en, ar) => (isRTL ? ar : en), (employee as any).missing).slice(0, 3).join(isRTL ? "، " : ", ")}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
-                        <div
-                          className={`flex items-center text-sm text-foreground ${isRTL ? "flex-row-reverse" : ""}`}
-                        >
-                          <Mail
-                            className={`w-3.5 h-3.5 ${isRTL ? "ml-2" : "mr-2"} text-muted-foreground`}
-                          />{" "}
-                          {employee.email}
-                        </div>
+                        {employee.email && (
+                          <div
+                            className={`flex items-center text-sm text-foreground ${isRTL ? "flex-row-reverse" : ""}`}
+                          >
+                            <Mail
+                              className={`w-3.5 h-3.5 ${isRTL ? "ml-2" : "mr-2"} text-muted-foreground`}
+                            />{" "}
+                            {employee.email}
+                          </div>
+                        )}
+                        {!employee.email && !employee.phone && (
+                          <span className="text-xs text-amber-700">{isRTL ? "لا يوجد بريد أو رقم جوال" : "No e-mail or mobile number"}</span>
+                        )}
                         {employee.phone && (
                           <div
-                            className={`flex items-center text-xs text-muted-foreground ${isRTL ? "flex-row-reverse" : ""}`}
+                            className={`flex items-center text-sm text-foreground ${isRTL ? "flex-row-reverse" : ""}`}
                           >
                             <Phone
                               className={`w-3.5 h-3.5 ${isRTL ? "ml-2" : "mr-2"}`}
@@ -397,7 +464,7 @@ export default function Employees() {
                       className={`px-6 py-4 ${isRTL ? "text-left" : "text-right"}`}
                     >
                       <div
-                        className={`flex items-center ${isRTL ? "justify-start" : "justify-end"} gap-2 opacity-0 group-hover:opacity-100 transition-opacity`}
+                        className={`${(employee as any).shared ? "hidden " : ""}flex items-center ${isRTL ? "justify-start" : "justify-end"} gap-2 opacity-0 group-hover:opacity-100 transition-opacity`}
                       >
                         <button
                           onClick={() => {
@@ -423,18 +490,32 @@ export default function Employees() {
                           <Sparkles className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => sendInvite(employee.id, `${employee.firstName} ${employee.lastName}`, isRTL)}
+                          onClick={() => setInviteFor(employee)}
                           className="p-1.5 text-muted-foreground hover:text-primary rounded-md hover:bg-primary/10 transition-colors"
-                          title={isRTL ? "كود الدعوة" : "Invite code"}
+                          title={isRTL ? ((employee as any).hasAccount ? "كود جديد / إعادة تعيين" : "دعوة الموظف") : ((employee as any).hasAccount ? "New code / reset" : "Invite the employee")}
                         >
                           <KeyRound className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => sendInvite(employee.id, `${employee.firstName} ${employee.lastName}`, isRTL, true)}
+                        <Link
+                          href={`/certificates?employee=${employee.id}`}
                           className="p-1.5 text-muted-foreground hover:text-primary rounded-md hover:bg-primary/10 transition-colors"
-                          title={isRTL ? "إرسال الدعوة بالبريد" : "E-mail the invitation"}
+                          title={isRTL ? "شهادة (خبرة / إنهاء خدمة)" : "Certificate (experience / end of service)"}
                         >
-                          <Mail className="w-4 h-4" />
+                          <Award className="w-4 h-4" />
+                        </Link>
+                        <button
+                          onClick={() => setShareFor(employee)}
+                          className="p-1.5 text-muted-foreground hover:text-primary rounded-md hover:bg-primary/10 transition-colors"
+                          title={isRTL ? "مشاركة مع شركات أخرى" : "Share with other companies"}
+                        >
+                          <Share2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setTransferFor(employee)}
+                          className="p-1.5 text-muted-foreground hover:text-primary rounded-md hover:bg-primary/10 transition-colors"
+                          title={isRTL ? "نقل إلى شركة أخرى" : "Move to another company"}
+                        >
+                          <ArrowRightLeft className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setEditingEmployee(employee)}
@@ -523,9 +604,9 @@ export default function Employees() {
                     {t.email}
                   </label>
                   <input
-                    required
                     type="email"
                     name="email"
+                    placeholder={isRTL ? "اختياري" : "optional"}
                     defaultValue={prefill?.email ?? ""}
                     dir="ltr"
                     className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
@@ -537,6 +618,7 @@ export default function Employees() {
                   </label>
                   <input
                     name="phone"
+                    placeholder="+966 5x xxx xxxx"
                     defaultValue={prefill?.phone ?? ""}
                     dir="ltr"
                     className="w-full px-3 py-2 border border-border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
@@ -611,6 +693,20 @@ export default function Employees() {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-border p-4 space-y-2 bg-muted/20">
+                <label className="text-sm font-semibold">{isRTL ? "إرسال دعوة الدخول" : "Send the sign-in invitation"}</label>
+                <select name="sendVia" defaultValue="none" className="w-full px-3 py-2 border border-border rounded-lg bg-background text-sm">
+                  <option value="none">{isRTL ? "لا ترسل الآن (أظهر الكود فقط)" : "Do not send now (just show the code)"}</option>
+                  <option value="auto">{isRTL ? "تلقائي: البريد أولًا ثم الرسائل" : "Automatic: e-mail first, then SMS"}</option>
+                  <option value="email">{isRTL ? "بالبريد الإلكتروني" : "By e-mail"}</option>
+                  <option value="sms">{isRTL ? "برسالة نصية" : "By SMS"}</option>
+                </select>
+                <p className="text-xs text-muted-foreground">{isRTL ? "يصل للموظف اسم المستخدم واسم الشركة ورمز لمرة واحدة لإنشاء كلمة المرور. يكفي بريد أو رقم جوال." : "The person receives the username, the company and a one-time code to create their password. An e-mail or a mobile number is enough."}</p>
+              </div>
+              <EmployeeExtraFields />
+
+              <ContractFields />
+
               <div
                 className={`pt-4 flex ${isRTL ? "flex-row-reverse" : ""} justify-end gap-3 border-t border-border shrink-0`}
               >
@@ -654,6 +750,12 @@ export default function Employees() {
               onSubmit={handleEditSubmit}
               className="flex-1 overflow-y-auto p-6 space-y-6"
             >
+              {(editingEmployee as any).incomplete && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-900 p-3 text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>{(isRTL ? "بيانات ناقصة تنتظر الإكمال: " : "Data still to complete: ") + missingLabels((en, ar) => (isRTL ? ar : en), (editingEmployee as any).missing).join(isRTL ? "، " : ", ")}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className={`space-y-2 ${isRTL ? "text-right" : ""}`}>
                   <label className="text-sm font-medium text-foreground">
@@ -687,7 +789,6 @@ export default function Employees() {
                     {t.email}
                   </label>
                   <input
-                    required
                     type="email"
                     name="email"
                     defaultValue={editingEmployee.email}
@@ -777,6 +878,16 @@ export default function Employees() {
                 </div>
               </div>
 
+              <EmployeeExtraFields e={editingEmployee} />
+              <AttendanceAccess e={editingEmployee} />
+              <ContractFields
+                key={editingEmployee.id}
+                initial={{
+                  type: (editingEmployee as any).contractType, start: (editingEmployee as any).contractStart,
+                  months: (editingEmployee as any).contractMonths, end: (editingEmployee as any).contractEnd,
+                }}
+              />
+
               <div
                 className={`pt-4 flex ${isRTL ? "flex-row-reverse" : ""} justify-end gap-3 border-t border-border shrink-0`}
               >
@@ -799,6 +910,13 @@ export default function Employees() {
           </motion.div>
         </div>
       )}
+
+      {inviteFor && <InviteModal employee={inviteFor} onClose={() => { setInviteFor(null); queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() }); }} />}
+      {inviteAll && <InviteAllModal onClose={() => { setInviteAll(false); queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() }); }} />}
+
+      {shareFor && <ShareDialog kind="employee" id={shareFor.id} name={`${shareFor.firstName} ${shareFor.lastName}`} onClose={() => setShareFor(null)} onSaved={() => queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() })} />}
+
+      {transferFor && <TransferDialog kind="employee" id={transferFor.id} name={`${transferFor.firstName} ${transferFor.lastName}`} onClose={() => setTransferFor(null)} onMoved={() => queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() })} />}
 
       {hubEmployee && <EmployeeHub employee={hubEmployee as any} onClose={() => { setHubEmployee(null); queryClient.invalidateQueries({ queryKey: getListEmployeesQueryKey() }); }} />}
 

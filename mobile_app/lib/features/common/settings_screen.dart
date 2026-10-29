@@ -9,6 +9,7 @@ import '../../core/api/api.dart';
 import '../../core/config.dart';
 import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../core/push/push_service.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
@@ -26,6 +27,7 @@ class _PushSwitch extends StatefulWidget {
 
 class _PushSwitchState extends State<_PushSwitch> {
   bool _on = true;
+  bool _allowed = true;     // the phone's own permission
 
   @override
   void initState() {
@@ -33,19 +35,42 @@ class _PushSwitchState extends State<_PushSwitch> {
     PushService.isEnabled().then((v) {
       if (mounted) setState(() => _on = v);
     });
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final ok = await PushService.permissionGranted();
+    if (mounted) setState(() => _allowed = ok);
+  }
+
+  /// Ask the phone for permission; when it was refused for good, open the phone's settings page of this app.
+  Future<void> _allow() async {
+    final ok = await PushService.requestPermission();
+    if (!ok) await openAppSettings();
+    await _refresh();
   }
 
   @override
-  Widget build(BuildContext context) => SwitchListTile(
-        value: _on,
-        onChanged: (v) {
-          setState(() => _on = v);
-          PushService.setEnabled(v);
-        },
-        secondary: Icon(Icons.notifications_active_rounded, color: context.scheme.primary),
-        title: Text(context.t('settings.push'), style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Text(context.t('settings.push_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12.5)),
-      );
+  Widget build(BuildContext context) => Column(children: [
+        SwitchListTile(
+          value: _on,
+          onChanged: (v) {
+            setState(() => _on = v);
+            PushService.setEnabled(v);
+            if (v && !_allowed) _allow();
+          },
+          secondary: Icon(Icons.notifications_active_rounded, color: context.scheme.primary),
+          title: Text(context.t('settings.push'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(context.t('settings.push_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12.5)),
+        ),
+        if (!_allowed)
+          ListTile(
+            leading: Icon(Icons.warning_amber_rounded, color: context.colors.warning),
+            title: Text(context.t('settings.push_blocked'), style: TextStyle(color: context.colors.warning, fontWeight: FontWeight.w700, fontSize: 13.5)),
+            subtitle: Text(context.t('settings.push_blocked_hint'), style: TextStyle(color: context.colors.subtext, fontSize: 12.5)),
+            trailing: FilledButton(onPressed: _allow, child: Text(context.t('settings.push_allow'))),
+          ),
+      ]);
 }
 
 // =============================================================== settings page
@@ -110,7 +135,7 @@ class SettingsScreen extends ConsumerWidget {
               OutlinedButton.icon(
                 onPressed: () async {
                   final none = context.t('settings.up_to_date');
-                  final u = await fetchAvailableUpdate();
+                  final u = await checkForUpdate();
                   if (context.mounted && u == null) toast(context, none);
                 },
                 icon: const Icon(Icons.system_update_alt_rounded),

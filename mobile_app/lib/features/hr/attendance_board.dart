@@ -24,7 +24,7 @@ class _AttendanceBoardScreenState extends ConsumerState<AttendanceBoardScreen> {
   DateTime _day = DateTime.now();
   String _filter = ''; // '' = all, else a board status, or 'outside'
 
-  static const _filters = ['', 'present', 'late', 'half_day', 'absent', 'on_leave', 'not_in', 'outside'];
+  static const _filters = ['', 'present', 'late', 'half_day', 'absent', 'on_leave', 'not_in', 'not_started', 'outside'];
 
   @override
   Widget build(BuildContext context) {

@@ -72,7 +72,7 @@ export function Badge({ tone = "gray", children }: { tone?: keyof typeof TONES |
 }
 
 export const STATUS_TONE: Record<string, string> = {
-  present: "green", late: "amber", half_day: "orange", absent: "red", on_leave: "blue", not_in: "gray", off: "gray", holiday: "violet",
+  present: "green", late: "amber", half_day: "orange", absent: "red", on_leave: "blue", not_in: "gray", not_started: "gray", off: "gray", holiday: "violet",
   approved: "green", pending: "amber", rejected: "red", cancelled: "gray", paid: "green", active: "green", inactive: "gray",
 };
 

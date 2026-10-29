@@ -78,7 +78,7 @@ class DepartmentsScreen extends ConsumerWidget {
                     return RowTile(
                       leading: IconBadge(Icons.account_tree_rounded, color: colorFor(d.name), size: 46),
                       title: d.name,
-                      subtitle: [if ((d.description ?? '').isNotEmpty) d.description!, if (d.headName != null) '${context.t('org.head')}: ${d.headName}'].join(' · '),
+                      subtitle: [if (d.shared) context.t('share.from', {'name': d.sharedFrom ?? ''}), if ((d.description ?? '').isNotEmpty) d.description!, if (d.headName != null) '${context.t('org.head')}: ${d.headName}', if (!d.shared && d.sharedCount > 0) context.t('share.count', {'n': d.sharedCount})].join(' · '),
                       trailing: Pill(context.t('org.people_count', {'n': d.employeeCount})),
                       onTap: () => context.push('/h/department/${d.id}'),
                     );

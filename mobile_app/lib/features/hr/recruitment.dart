@@ -9,6 +9,7 @@ import '../../core/models/json.dart';
 import '../../core/models/models.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../data/providers.dart';
 
 const _pipeline = ['new', 'screening', 'interview', 'offer', 'hired', 'rejected'];
@@ -69,11 +70,11 @@ class _RecruitmentScreenState extends ConsumerState<RecruitmentScreen> {
                     onRetry: () => ref.invalidate(jobsProvider),
                     builder: (items) => items.isEmpty
                         ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.work_outline_rounded, title: context.t('rec.no_jobs'), subtitle: context.t('rec.no_jobs_hint')))])
-                        : ListView.separated(
+                        : AdaptiveList(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                             physics: const AlwaysScrollableScrollPhysics(),
                             itemCount: items.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            gap: 10,
                             itemBuilder: (_, i) {
                               final j = items[i];
                               return RowTile(
@@ -93,11 +94,11 @@ class _RecruitmentScreenState extends ConsumerState<RecruitmentScreen> {
                       final items = _filter == 0 ? all : all.where((a) => a.status == _pipeline[_filter - 1]).toList();
                       return items.isEmpty
                           ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.person_search_rounded, title: context.t('rec.no_applicants'), subtitle: context.t('rec.no_applicants_hint')))])
-                          : ListView.separated(
+                          : AdaptiveList(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                               physics: const AlwaysScrollableScrollPhysics(),
                               itemCount: items.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 10),
+                              gap: 10,
                               itemBuilder: (_, i) {
                                 final a = items[i];
                                 return RowTile(leading: Avatar(name: a.name, size: 46), title: a.name, subtitle: [a.jobTitle, if (a.appliedAt != null) fmtDayMonth(context, a.appliedAt!)].where((s) => s.isNotEmpty).join(' · '), trailing: StatusChip(a.status), onTap: () => showAppSheet(context, title: a.name, child: _ApplicantSheet(app: a)));

@@ -35,6 +35,8 @@ import Group from "./pages/Group";
 import Meetings from "./pages/Meetings";
 import Owner from "./pages/Owner";
 import Complaints from "./pages/Complaints";
+import Certificates from "./pages/Certificates";
+import Contracts from "./pages/Contracts";
 import MeetingRoom from "./pages/MeetingRoom";
 import { MeetingProvider } from "./contexts/MeetingContext";
 
@@ -102,6 +104,8 @@ function AuthGate() {
         <Route path="/group" component={Group} />
         <Route path="/owner" component={Owner} />
         <Route path="/complaints" component={Complaints} />
+        <Route path="/certificates" component={Certificates} />
+        <Route path="/contracts" component={Contracts} />
         <Route path="/meetings" component={Meetings} />
         <Route path="/meetings/:id" component={MeetingRoom} />
         <Route component={NotFound} />

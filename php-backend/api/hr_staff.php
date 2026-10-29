@@ -34,6 +34,24 @@ function handle_hr_staff(string $path, string $method, array $body): void {
     }
 }
 
+/**
+ * The platform owner's account (name, e-mail, phone, password, status, role, permissions) can be changed by the owner only -
+ * never by an HR admin / manager. Changing the e-mail or phone would also let someone take the account over through
+ * "forgot password", so every change is blocked, not just the password.
+ */
+function hr_staff_lock_owner(PDO $pdo, int $targetId): void {
+    if (!function_exists('platform_owner_check')) require_once __DIR__ . '/../helpers/features.php';
+    if ($targetId !== (int)me()['id'] && platform_owner_check($pdo, $targetId)) {
+        error_response('This is the owner account. Only the owner can change it (a forgotten password is reset by e-mail or SMS).', 403);
+    }
+    // A group super admin works "under the owner": only the owner (or the person themself) may change or close that account.
+    if ($targetId !== (int)me()['id'] && !platform_owner_check($pdo, (int)me()['id'])) {
+        $g = $pdo->prepare("SELECT 1 FROM group_admins WHERE user_id = ? LIMIT 1");
+        $g->execute([$targetId]);
+        if ($g->fetchColumn()) error_response('This is a group super admin account. Only the owner can change or close it.', 403);
+    }
+}
+
 function hr_staff_columns(): string {
     return "u.id, u.name, u.email, u.role, u.avatar, u.title, u.phone, u.status,
             u.created_at, u.created_by, u.last_login_at, creator.name AS created_by_name";
@@ -43,6 +61,8 @@ function hr_staff_attach_permissions(PDO $pdo, array $member): array {
     $p = $pdo->prepare("SELECT module, enabled FROM user_permissions WHERE user_id = ?");
     $p->execute([$member['id']]);
     $member['permissions'] = $p->fetchAll();
+    if (!function_exists('platform_owner_check')) require_once __DIR__ . '/../helpers/features.php';
+    $member['is_owner'] = platform_owner_check($pdo, (int)$member['id']);
     return $member;
 }
 
@@ -128,6 +148,7 @@ function hr_staff_update(int $id, array $body, PDO $pdo): void {
 
     $target = hr_staff_fetch($id, $pdo);
     if (!$target) error_response('HR staff member not found', 404);
+    hr_staff_lock_owner($pdo, $id);
 
     $fields = [];
     $params = [];
@@ -177,6 +198,7 @@ function hr_staff_delete(int $id, PDO $pdo): void {
     require_admin();
     if ($id === (int)me()['id']) error_response('You cannot delete your own account', 422);
     if (!hr_staff_fetch($id, $pdo)) error_response('HR staff member not found', 404);
+    hr_staff_lock_owner($pdo, $id);
 
     $pdo->prepare("DELETE FROM sessions WHERE user_id = ?")->execute([$id]);
     $pdo->prepare("DELETE FROM user_permissions WHERE user_id = ?")->execute([$id]);

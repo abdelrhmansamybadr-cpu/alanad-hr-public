@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Users2, FolderGit2, Star, UserPlus, UserMinus, Trash2, Pencil } from "lucide-react";
+import { Plus, Users2, FolderGit2, Star, UserPlus, UserMinus, Trash2, Pencil, Share2, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { api } from "@/lib/http";
 import { Badge, Field, Modal, PageHeader, Spinner, Empty, btnCls, btnGhost, cardCls, inputCls, useTr } from "@/components/kit";
 import { useLang } from "@/contexts/LanguageContext";
 import { DepartmentInput, PositionInput, confirmNewTitle } from "@/components/Suggest";
+import { ShareDialog } from "@/components/ShareDialog";
+import { TransferDialog } from "@/components/TransferDialog";
 
 interface Dept {
   id: number;
@@ -17,8 +19,12 @@ interface Dept {
   headPosition?: string | null;
   employeeCount: number;
   members?: Member[];
+  companyId?: number;
+  shared?: boolean; // shared into this company by another one (read-only here)
+  sharedFrom?: string;
+  sharedCount?: number;
 }
-interface Member { id: number; firstName: string; lastName: string; position?: string | null; email?: string; status?: string; departmentId?: number | null; departmentName?: string | null }
+interface Member { id: number; firstName: string; lastName: string; position?: string | null; email?: string; status?: string; departmentId?: number | null; departmentName?: string | null; shared?: boolean; companyName?: string }
 
 const initials = (a: string, b = "") => `${a[0] ?? ""}${b[0] ?? ""}`.toUpperCase();
 
@@ -56,6 +62,7 @@ export default function Departments() {
             >
               <div className="p-3 bg-secondary rounded-xl text-primary w-fit"><FolderGit2 className="h-6 w-6" /></div>
               <h3 className="text-xl font-bold mt-4">{d.name}</h3>
+              {d.shared ? <div className="mt-1"><Badge tone="blue">{tr("From", "من")} {d.sharedFrom}</Badge></div> : (d.sharedCount ?? 0) > 0 ? <div className="mt-1"><Badge tone="blue">{tr(`Shared with ${d.sharedCount}`, `مشارك مع ${d.sharedCount}`)}</Badge></div> : null}
               <p className="text-sm text-muted-foreground mt-1 line-clamp-2 min-h-[2.5rem]">{d.description || "—"}</p>
               <div className="mt-5 pt-4 border-t border-border/50 flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Users2 className="h-4 w-4" /><b className="text-foreground">{d.employeeCount}</b> {tr("people", "أشخاص")}</span>
@@ -76,7 +83,10 @@ export default function Departments() {
 
 function DeptForm({ dept, onClose, onSaved }: { dept: Partial<Dept>; onClose: () => void; onSaved: () => void }) {
   const tr = useTr();
-  const { data: employees = [] } = useQuery<Member[]>({ queryKey: ["employees-all"], queryFn: () => api("/employees") });
+  const { data: own = [] } = useQuery<Member[]>({ queryKey: ["employees-all"], queryFn: () => api("/employees") });
+  // the head may also be someone another company of the group shares with this one
+  const { data: sharedIn = [] } = useQuery<Member[]>({ queryKey: ["employees-shared-in"], queryFn: () => api("/employees/shared-in"), retry: false });
+  const employees = [...own, ...sharedIn];
   const [name, setName] = useState(dept.name ?? "");
   const [description, setDescription] = useState(dept.description ?? "");
   const [head, setHead] = useState<string>(dept.headEmployeeId ? String(dept.headEmployeeId) : "");
@@ -106,7 +116,7 @@ function DeptForm({ dept, onClose, onSaved }: { dept: Partial<Dept>; onClose: ()
         <Field label={tr("Department head", "رئيس القسم")} hint={tr("The head approves their team's leave and requests.", "يوافق الرئيس على إجازات وطلبات فريقه.")}>
           <select className={inputCls} value={head} onChange={(e) => setHead(e.target.value)}>
             <option value="">{tr("No head", "بدون رئيس")}</option>
-            {employees.filter((e) => e.status !== "inactive").map((e) => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}{e.position ? ` — ${e.position}` : ""}</option>)}
+            {employees.filter((e) => e.status !== "inactive").map((e) => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}{e.position ? ` — ${e.position}` : ""}{(e as any).sharedFrom ? ` (${(e as any).sharedFrom})` : ""}</option>)}
           </select>
         </Field>
         <div className="flex items-center justify-between pt-2">
@@ -126,6 +136,8 @@ function DeptDetail({ id, onClose, onChanged, onEdit }: { id: number; onClose: (
   const qc = useQueryClient();
   const { data: d, isLoading } = useQuery<Dept>({ queryKey: ["department", id], queryFn: () => api(`/departments/${id}`) });
   const { data: all = [] } = useQuery<Member[]>({ queryKey: ["employees-all"], queryFn: () => api("/employees") });
+  const [sharing, setSharing] = useState(false);
+  const [transferring, setTransferring] = useState(false);
   const [adding, setAdding] = useState(false);
   const [picked, setPicked] = useState<number[]>([]);
   const [q, setQ] = useState("");
@@ -167,8 +179,11 @@ function DeptDetail({ id, onClose, onChanged, onEdit }: { id: number; onClose: (
         <div className="space-y-6">
           <div className="flex items-start justify-between gap-3">
             <p className="text-sm text-muted-foreground">{d.description || tr("No description", "بدون وصف")}</p>
-            <button className={btnGhost} onClick={() => onEdit(d)}><Pencil className="h-4 w-4" />{tr("Edit", "تعديل")}</button>
+            {d.shared ? null : <div className="flex gap-2"><button className={btnGhost} onClick={() => setSharing(true)}><Share2 className="h-4 w-4" />{tr("Share", "مشاركة")}</button><button className={btnGhost} onClick={() => setTransferring(true)}><ArrowRightLeft className="h-4 w-4" />{tr("Move", "نقل")}</button><button className={btnGhost} onClick={() => onEdit(d)}><Pencil className="h-4 w-4" />{tr("Edit", "تعديل")}</button></div>}
           </div>
+          {d.shared && <div className="rounded-xl bg-sky-50 text-sky-800 border border-sky-200 p-3 text-sm">{tr(`Shared by ${d.sharedFrom}. You can add your own people to it, but only ${d.sharedFrom} can change it.`, `مشارك من ${d.sharedFrom}. يمكنك إضافة موظفيك إليه، لكن ${d.sharedFrom} فقط تستطيع تعديله.`)}</div>}
+          {transferring && <TransferDialog kind="department" id={d.id} name={d.name} onClose={() => setTransferring(false)} onMoved={() => { onChanged(); onClose(); }} />}
+          {sharing && <ShareDialog kind="department" id={d.id} name={d.name} onClose={() => setSharing(false)} onSaved={reload} />}
 
           <div className={cardCls + " flex items-center gap-4"}>
             <div className="h-12 w-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center font-bold">{d.headName ? initials(d.headName.split(" ")[0], d.headName.split(" ")[1] ?? "") : <Star className="h-5 w-5" />}</div>
@@ -177,7 +192,7 @@ function DeptDetail({ id, onClose, onChanged, onEdit }: { id: number; onClose: (
               <div className="font-bold">{d.headName ?? tr("No head assigned", "لم يُعيَّن رئيس")}</div>
               {d.headPosition && <div className="text-xs text-muted-foreground">{d.headPosition}</div>}
             </div>
-            {d.headEmployeeId && <button className={btnGhost} onClick={() => setHead(null)}>{tr("Clear", "إزالة")}</button>}
+            {d.headEmployeeId && !d.shared && <button className={btnGhost} onClick={() => setHead(null)}>{tr("Clear", "إزالة")}</button>}
           </div>
 
           <div>
@@ -228,8 +243,10 @@ function DeptDetail({ id, onClose, onChanged, onEdit }: { id: number; onClose: (
                       <div className="font-medium text-sm truncate">{m.firstName} {m.lastName}{m.id === d.headEmployeeId && <Star className="inline h-3.5 w-3.5 ms-1 text-amber-500" />}</div>
                       <div className="text-xs text-muted-foreground truncate">{m.position || "—"}</div>
                     </div>
-                    {m.id !== d.headEmployeeId && <button className="text-xs text-primary" onClick={() => setHead(m.id)}>{tr("Make head", "تعيين رئيساً")}</button>}
-                    <button className="p-1.5 text-muted-foreground hover:text-red-600" title={tr("Remove", "إزالة")} onClick={() => removeMember(m)}><UserMinus className="h-4 w-4" /></button>
+                    {m.shared ? <Badge tone="blue">{m.companyName}</Badge> : <>
+                      {m.id !== d.headEmployeeId && !d.shared && <button className="text-xs text-primary" onClick={() => setHead(m.id)}>{tr("Make head", "تعيين رئيساً")}</button>}
+                      <button className="p-1.5 text-muted-foreground hover:text-red-600" title={tr("Remove", "إزالة")} onClick={() => removeMember(m)}><UserMinus className="h-4 w-4" /></button>
+                    </>}
                   </div>
                 ))}
               </div>

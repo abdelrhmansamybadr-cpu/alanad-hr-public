@@ -19,10 +19,10 @@ export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  async function sendCode(e: FormEvent) {
-    e.preventDefault();
+  async function sendCode(e: FormEvent | null, via: "email" | "sms" = "email") {
+    e?.preventDefault();
     setError(""); setBusy(true);
-    try { await post("/api/auth/employee/forgot-password", { email: email.trim() }); setStep("code"); }
+    try { await post("/api/auth/employee/forgot-password", { email: email.trim(), via }); setStep("code"); }
     catch (err: any) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -46,7 +46,7 @@ export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string;
       <div>
         <h2 className="text-2xl font-bold">{tr("Reset your password", "إعادة تعيين كلمة المرور")}</h2>
         <p className="text-muted-foreground text-sm mt-1">
-          {step === "email" && tr("Enter your e-mail and we will send you a 6-digit code.", "أدخل بريدك الإلكتروني وسنرسل لك رمزاً من 6 أرقام.")}
+          {step === "email" && tr("Enter your e-mail or mobile number and we will send you a 6-digit code.", "أدخل بريدك الإلكتروني أو رقم جوالك وسنرسل لك رمزاً من 6 أرقام.")}
           {step === "code" && tr("If this address has an account, a code is on its way. It lasts 30 minutes.", "إذا كان لهذا البريد حساب فالرمز في الطريق إليه. صالح لمدة 30 دقيقة.")}
           {step === "done" && tr("Your password has been changed.", "تم تغيير كلمة المرور.")}
         </p>
@@ -56,8 +56,9 @@ export function ForgotPassword({ initialEmail, onBack }: { initialEmail: string;
 
       {step === "email" && (
         <form onSubmit={sendCode} className="space-y-4">
-          <div className="relative"><Mail className="h-4 w-4 absolute top-1/2 -translate-y-1/2 start-3 text-muted-foreground" /><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={input + " ps-10"} placeholder="you@example.com" autoComplete="email" /></div>
+          <div className="relative"><Mail className="h-4 w-4 absolute top-1/2 -translate-y-1/2 start-3 text-muted-foreground" /><input type="text" inputMode="email" dir="ltr" required value={email} onChange={(e) => setEmail(e.target.value)} className={input + " ps-10"} placeholder="you@example.com  /  +966 5x xxx xxxx" autoComplete="username" /></div>
           <button className={btn} disabled={busy}>{busy ? "…" : tr("Send me a code", "أرسل لي رمزاً")}</button>
+          <button type="button" disabled={busy || !email.trim()} className="w-full text-sm text-primary hover:underline disabled:opacity-50" onClick={() => sendCode(null, "sms")}>{tr("Send the code by SMS instead", "أرسل الرمز برسالة SMS بدلاً من ذلك")}</button>
           <button type="button" className="w-full text-sm text-primary hover:underline" onClick={() => email.trim() && setStep("code")}>{tr("I already have a code", "لدي رمز بالفعل")}</button>
         </form>
       )}

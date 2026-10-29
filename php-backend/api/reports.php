@@ -85,6 +85,7 @@ function att_month_stats(PDO $pdo, array $emp, int $month, int $year): array {
         for ($d = new DateTime(max($l['start_date'], $from)); $d->format('Y-m-d') <= min($l['end_date'], $to); $d->modify('+1 day')) $lv[$d->format('Y-m-d')] = true;
     }
 
+    $trackFrom = att_tracking_start($pdo, $eid);
     $st = ['workdays' => 0, 'present' => 0, 'late' => 0, 'half_day' => 0, 'absent' => 0, 'leave' => 0, 'hours' => 0.0, 'overtime_hours' => 0.0, 'late_minutes' => 0, 'out_zone_minutes' => 0];
     foreach ($att as $ds => $r) {
         $st['hours'] += (float)$r['hours_worked'];
@@ -103,7 +104,7 @@ function att_month_stats(PDO $pdo, array $emp, int $month, int $year): array {
             continue;
         }
         if (isset($lv[$ds])) { $st['leave']++; continue; }
-        if ($ds < $today) $st['absent']++;
+        if ($ds < $today && $trackFrom !== null && $ds >= $trackFrom) $st['absent']++;
     }
     $st['hours'] = round($st['hours'], 2);
     $st['overtime_hours'] = round($st['overtime_hours'], 2);

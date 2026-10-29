@@ -82,7 +82,7 @@ interface AuthContextValue {
   company: Company | null;
   group: GroupInfo | null;
   /** Work inside another company of the group (the page reloads so nothing of the old company stays on screen). */
-  switchCompany: (companyId: number) => Promise<void>;
+  switchCompany: (companyId: number, to?: string) => Promise<void>;
   refreshCompany: () => Promise<void>;
   token: string | null;
   isLoading: boolean;
@@ -262,7 +262,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const switchCompany = useCallback(
-    async (companyId: number) => {
+    async (companyId: number, to?: string) => {
       if (!token) return;
       const r = await fetch(apiUrl("/api/group/switch"), {
         method: "POST",
@@ -274,7 +274,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(err.error || "Could not switch company");
       }
       // The server now remembers the company for this sign-in. Reload so no data of the old company stays on screen.
-      window.location.assign(import.meta.env.BASE_URL || "/");
+      // (`to` = a page to open once the other company is open, e.g. the employee found by the search box)
+      const base = import.meta.env.BASE_URL || "/";
+      window.location.assign(to ? base.replace(/\/$/, "") + (to.startsWith("/") ? to : "/" + to) : base);
     },
     [token],
   );

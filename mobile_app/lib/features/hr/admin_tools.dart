@@ -10,6 +10,7 @@ import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/ui/format.dart';
 import '../../core/ui/widgets.dart';
+import '../../core/ui/responsive.dart';
 import '../data/providers.dart';
 import '../rewards/rewards_screen.dart';
 
@@ -161,11 +162,11 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
               onRetry: () => ref.invalidate(auditProvider(_entity)),
               builder: (items) => items.isEmpty
                   ? ListView(children: [Padding(padding: const EdgeInsets.only(top: 80), child: EmptyState(icon: Icons.history_rounded, title: context.t('audit.empty')))])
-                  : ListView.separated(
+                  : AdaptiveList(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                       physics: const AlwaysScrollableScrollPhysics(),
                       itemCount: items.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      gap: 8,
                       itemBuilder: (_, i) {
                         final a = items[i];
                         return AppCard(

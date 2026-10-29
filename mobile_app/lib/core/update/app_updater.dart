@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/material.dart';
 import 'package:ota_update/ota_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -29,7 +30,7 @@ class UpdateInfo {
   factory UpdateInfo.fromJson(Map<String, dynamic> j) => UpdateInfo(
         versionCode: (j['versionCode'] as num).toInt(),
         versionName: j['versionName'] as String? ?? '',
-        apkUrl: j['apkUrl'] as String,
+        apkUrl: (j['apkUrl'] ?? j['installerUrl']) as String,
         sha256: j['sha256'] as String?,
         notes: j['notes'] as String? ?? '',
         mandatory: j['mandatory'] as bool? ?? false,
@@ -39,15 +40,29 @@ class UpdateInfo {
 /// Where the release script publishes the latest version info.
 String get updateManifestUrl => '${AppConfig.baseUrl}/app/alanad/version.json';
 
+/// The laptop (Windows) app has its own manifest next to the phone one: it points at the Setup installer.
+String get windowsManifestUrl => updateManifestUrl.replaceFirst('version.json', 'windows.json');
+
+/// The update the app should offer right now (set by the start-up check and by "Check for updates" in Settings).
+final ValueNotifier<UpdateInfo?> availableUpdate = ValueNotifier<UpdateInfo?>(null);
+
+/// Looks for a newer release and, when there is one, makes the "Update available" card appear. Returns it (or null).
+Future<UpdateInfo?> checkForUpdate() async {
+  final info = await fetchAvailableUpdate();
+  availableUpdate.value = null; // a fresh value always re-opens the card, even for the same version
+  availableUpdate.value = info;
+  return info;
+}
+
 /// Returns the published release if it is newer than the installed app, else null.
 /// Never throws: no network / no manifest simply means "no update".
 Future<UpdateInfo?> fetchAvailableUpdate() async {
-  if (!Platform.isAndroid) return null;
+  if (!Platform.isAndroid && !Platform.isWindows) return null;
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
   try {
     final installed = int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ?? 0;
     // A changing query string makes the host's CDN fetch the current file instead of a cached older one.
-    final request = await client.getUrl(Uri.parse('$updateManifestUrl?t=${DateTime.now().millisecondsSinceEpoch}'));
+    final request = await client.getUrl(Uri.parse('${Platform.isWindows ? windowsManifestUrl : updateManifestUrl}?t=${DateTime.now().millisecondsSinceEpoch}'));
     request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
     final response = await request.close().timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) return null;
@@ -82,22 +97,85 @@ class _UpdateGateState extends State<UpdateGate> {
   @override
   void initState() {
     super.initState();
-    Future<void>.delayed(const Duration(seconds: 2), _check);
+    availableUpdate.addListener(_onUpdate);
+    Future<void>.delayed(const Duration(seconds: 2), checkForUpdate);
   }
 
   @override
   void dispose() {
+    availableUpdate.removeListener(_onUpdate);
     _sub?.cancel();
     super.dispose();
   }
 
-  Future<void> _check() async {
-    final info = await fetchAvailableUpdate();
-    if (mounted && info != null) setState(() => _update = info);
+  void _onUpdate() {
+    final info = availableUpdate.value;
+    if (mounted && info != null) {
+      setState(() {
+        _update = info;
+        _dismissed = false;
+        _error = null;
+      });
+    }
+  }
+
+  /// Laptop: download the Setup installer, check it, run it silently (it closes this app, upgrades it and starts it again).
+  Future<void> _installWindows(UpdateInfo info, bool ar) async {
+    setState(() {
+      _busy = true;
+      _percent = 0;
+      _error = null;
+    });
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    try {
+      final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}AlAnadHR-update-${info.versionCode}.exe');
+      final request = await client.getUrl(Uri.parse(info.apkUrl));
+      final response = await request.close();
+      if (response.statusCode != 200) throw HttpException('status ${response.statusCode}');
+      final total = response.contentLength;
+      var got = 0;
+      final sink = file.openWrite();
+      await for (final chunk in response) {
+        sink.add(chunk);
+        got += chunk.length;
+        if (total > 0 && mounted) setState(() => _percent = (got * 100 ~/ total).clamp(0, 100));
+      }
+      await sink.flush();
+      await sink.close();
+      final want = info.sha256;
+      if (want != null && want.isNotEmpty) {
+        final have = (await crypto.sha256.bind(file.openRead()).first).toString();
+        if (have.toLowerCase() != want.toLowerCase()) {
+          await file.delete().catchError((_) => file);
+          if (mounted) {
+            setState(() {
+              _busy = false;
+              _error = ar ? 'الملف غير سليم، حاول مرة أخرى' : 'The downloaded file is invalid. Please try again.';
+            });
+          }
+          return;
+        }
+      }
+      await Process.start(file.path, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], mode: ProcessStartMode.detached);
+      exit(0);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = ar ? 'تعذر التحديث، حاول مرة أخرى' : 'Update failed. Please try again.';
+        });
+      }
+    } finally {
+      client.close();
+    }
   }
 
   void _install(bool ar) {
     final info = _update!;
+    if (Platform.isWindows) {
+      _installWindows(info, ar);
+      return;
+    }
     setState(() {
       _busy = true;
       _percent = 0;

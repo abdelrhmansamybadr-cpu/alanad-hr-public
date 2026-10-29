@@ -785,7 +785,12 @@ export default function HRStaff() {
                     {getStatusLabel(member.status, t)}
                   </span>
 
-                  <div className="flex gap-1">
+                  {(member as any).isOwner && (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200">
+                      <Shield className="w-3.5 h-3.5" />{isRTL ? "حساب المالك — لا يغيّره غير المالك" : "Owner account — only the owner can change it"}
+                    </span>
+                  )}
+                  <div className={`flex gap-1 ${(member as any).isOwner ? "hidden" : ""}`}>
                     <button
                       onClick={() => setEditingStaff(member)}
                       className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg"

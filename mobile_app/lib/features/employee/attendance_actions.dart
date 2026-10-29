@@ -2,8 +2,7 @@ import '../../core/offline/offline_attendance.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:network_info_plus/network_info_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
+import '../../core/network/network_probe.dart';
 
 import '../../core/api/api.dart';
 import '../../core/i18n/strings.dart';
@@ -19,6 +18,8 @@ class Evidence {
   double? lng;
   String? ssid;
   String? bssid;
+  String? gateway; // wired / Wi-Fi gateway address
+  String? link; // wifi | wired
   bool mock = false; // the phone says the location is faked
   String? deviceId;
 
@@ -27,6 +28,8 @@ class Evidence {
         if (lng != null) 'lng': lng,
         if (ssid != null) 'ssid': ssid,
         if (bssid != null) 'bssid': bssid,
+        if (gateway != null) 'gateway': gateway,
+        if (link != null) 'link': link,
         if (mock) 'mock': true,
         if (deviceId != null) 'deviceId': deviceId,
       };
@@ -67,10 +70,11 @@ Future<Evidence> gatherEvidence(TodayInfo info, {required String noPermission, r
     }
   }
   if (needsWifi) {
-    if (!quick) await Permission.nearbyWifiDevices.request();
-    final info = NetworkInfo();
-    ev.ssid = (await info.getWifiName())?.replaceAll('"', '');
-    ev.bssid = await info.getWifiBSSID();
+    final link = await NetworkProbe.current();
+    ev.link = link.kind;
+    ev.ssid = link.ssid;
+    ev.bssid = link.bssid;
+    ev.gateway = link.gateway;
   }
   return ev;
 }

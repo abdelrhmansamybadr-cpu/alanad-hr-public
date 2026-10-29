@@ -319,6 +319,17 @@ try {
             break;
 
         // Owner control panel: which premium features each company may use
+        // Leaving certificates (designer, issue, e-mail, planned account closing) and contract alarms
+        case $firstSegment === 'certificates':
+            require_once __DIR__ . '/api/certificates.php';
+            handle_certificates($pathOnly, $method, $body);
+            break;
+
+        case $firstSegment === 'contracts':
+            require_once __DIR__ . '/api/contracts.php';
+            handle_contracts($pathOnly, $method, $body);
+            break;
+
         case $firstSegment === 'owner':
             require_once __DIR__ . '/api/owner.php';
             handle_owner($pathOnly, $method, $body);

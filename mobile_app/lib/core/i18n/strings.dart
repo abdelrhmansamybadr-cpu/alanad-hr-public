@@ -3,17 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'strings_auth.dart';
+import 'strings_cert.dart';
 import 'strings_common.dart';
 import 'strings_employee.dart';
 import 'strings_group.dart';
 import 'strings_hr.dart';
+import 'strings_invite.dart';
 import 'strings_meetings.dart';
 import 'strings_premium.dart';
 import 'strings_v2.dart';
 
 /// All UI text, English and Arabic. Feature files contribute their own maps; they are merged here.
-final Map<String, String> _en = {...commonEn, ...authEn, ...employeeEn, ...hrEn, ...v2En, ...groupEn, ...meetingsEn, ...premiumEn};
-final Map<String, String> _ar = {...commonAr, ...authAr, ...employeeAr, ...hrAr, ...v2Ar, ...groupAr, ...meetingsAr, ...premiumAr};
+final Map<String, String> _en = {...commonEn, ...authEn, ...employeeEn, ...hrEn, ...v2En, ...groupEn, ...meetingsEn, ...premiumEn, ...certEn, ...inviteEn};
+final Map<String, String> _ar = {...commonAr, ...authAr, ...employeeAr, ...hrAr, ...v2Ar, ...groupAr, ...meetingsAr, ...premiumAr, ...certAr, ...inviteAr};
 
 extension TrX on BuildContext {
   /// Translate [key] for the current locale. `{name}` placeholders are replaced from [args].

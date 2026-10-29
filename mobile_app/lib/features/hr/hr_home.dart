@@ -8,7 +8,9 @@ import '../../core/i18n/strings.dart';
 import '../../core/models/models.dart';
 import '../../core/session/session.dart';
 import '../../core/ui/format.dart';
+import '../../core/ui/responsive.dart';
 import '../../core/ui/widgets.dart';
+import '../common/global_search.dart';
 import '../data/providers.dart';
 import '../group/group_screens.dart';
 
@@ -57,7 +59,8 @@ class HrHome extends ConsumerWidget {
                   ]),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
+              const SearchIconButton(),
               NotificationBell(count: unread, onTap: () => context.push('/inbox')),
             ]),
             const SizedBox(height: 18),
@@ -83,9 +86,7 @@ class _Dashboard extends ConsumerWidget {
     final currency = ref.watch(sessionProvider).company?.currency ?? '';
     final rate = s.total == 0 ? 0.0 : s.present / s.total;
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // ---- today's attendance hero
-      Container(
+    final hero = Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(gradient: brandGradient(context), borderRadius: BorderRadius.circular(22), boxShadow: [BoxShadow(color: context.scheme.primary.withValues(alpha: 0.3), blurRadius: 22, offset: const Offset(0, 10))]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -128,11 +129,8 @@ class _Dashboard extends ConsumerWidget {
             child: Text(context.t('hrhome.open_board')),
           ),
         ]),
-      ),
-      const SizedBox(height: 16),
-
-      // ---- KPI grid
-      GridView(
+      );
+    final kpis = GridView(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 10, crossAxisSpacing: 10, mainAxisExtent: 72),
@@ -142,8 +140,8 @@ class _Dashboard extends ConsumerWidget {
           StatTile(icon: Icons.work_outline_rounded, color: context.colors.info, value: '${s.openPositions}', label: context.t('hrhome.open_jobs'), onTap: () => context.push('/h/recruitment')),
           StatTile(icon: Icons.payments_rounded, color: const Color(0xFF10B981), value: compactNumber(context, s.payroll), label: '${context.t('hrhome.payroll')} ($currency)', onTap: () => context.push('/h/payroll')),
         ],
-      ),
-
+      );
+    final left = <Widget>[
       if (s.pendingCorrections > 0) ...[
         const SizedBox(height: 14),
         AppCard(
@@ -189,7 +187,8 @@ class _Dashboard extends ConsumerWidget {
           ]),
         ),
       ],
-
+    ];
+    final right = <Widget>[
       // ---- departments
       if (s.departments.isNotEmpty) ...[
         SectionHeader(context.t('hrhome.by_department'), action: context.t('common.view_all'), onAction: () => context.push('/h/departments')),
@@ -234,6 +233,11 @@ class _Dashboard extends ConsumerWidget {
         _Quick(Icons.payments_rounded, context.t('hrhome.q_payroll'), () => context.push('/h/payroll')),
         _Quick(Icons.celebration_rounded, context.t('me.holidays'), () => context.push('/holidays')),
       ]),
+    ];
+    // Laptop: the summary and the key numbers side by side, then two columns of sections. Phone: one column, same order as before.
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SplitColumns(left: [hero], right: [kpis], leftFlex: 5, rightFlex: 6, stackGap: 16),
+      SplitColumns(left: left, right: right),
     ]);
   }
 }
@@ -262,7 +266,7 @@ class _Quick extends StatelessWidget {
   /// App-icon style: a small rounded square with the name under it, four to a row.
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: (MediaQuery.of(context).size.width - 32) / 4,
+        width: context.isDesktop ? 104 : (MediaQuery.of(context).size.width - 32) / 4,
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: onTap,

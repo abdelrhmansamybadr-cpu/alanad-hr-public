@@ -9,6 +9,7 @@ import {
 } from "react";
 import { navigate } from "wouter/use-browser-location";
 import { routeForNotification } from "@/lib/notificationRoute";
+import { chime } from "@/lib/sound";
 
 export type NotifType = "info" | "success" | "warning" | "error";
 
@@ -45,7 +46,7 @@ export function useNotifications() {
   return ctx;
 }
 
-const POLL_MS = 30_000;
+const POLL_MS = 15_000;
 
 function authFetch(path: string, init?: RequestInit) {
   const token = localStorage.getItem("hr-token");
@@ -90,7 +91,19 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setPermission(result);
   }, []);
 
+  // Browsers only allow the permission question after a click: ask once, on the person's first click on the site.
+  useEffect(() => {
+    if (typeof Notification === "undefined" || Notification.permission !== "default") return;
+    const ask = () => {
+      window.removeEventListener("pointerdown", ask, true);
+      if (Notification.permission === "default") void Notification.requestPermission().then(setPermission).catch(() => {});
+    };
+    window.addEventListener("pointerdown", ask, true);
+    return () => window.removeEventListener("pointerdown", ask, true);
+  }, []);
+
   const desktop = useCallback((title: string, body: string, path?: string) => {
+    chime();   // an in-page sound too (works when the tab is in the background, once the person has clicked on the page)
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     try {
       const n = new Notification(title, { body, icon: "/favicon.ico", tag: title } as NotificationOptions);
@@ -133,9 +146,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(() => {
-      if (!document.hidden) load();
-    }, POLL_MS);
+    // also while the tab is in the background, so the pop-up and the sound still come
+    const timer = setInterval(() => { load(); }, POLL_MS);
     const onLogin = () => {
       firstLoad.current = true;
       load();
